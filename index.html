@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>E&amp;C Google API Usage</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0A0A09">
+    <link rel="icon" type="image/png" href="icon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Rajdhani:wght@600;700&display=swap" rel="stylesheet">
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
+    <style>
+        :root {
+            --crown: #E8E400;
+            --bg: #0A0A09;
+            --card: #141412;
+            --line: #2A2A26;
+            --text: #F4F4EE;
+            --muted: #A3A396;
+            --err: #FF6B5B;
+            --font-display: 'Rajdhani', 'Inter', system-ui, sans-serif;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; background: var(--bg); color: var(--text);
+            font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+            font-size: 15px; line-height: 1.5;
+        }
+        button, input, select { font: inherit; }
+        :focus-visible { outline: 2px solid var(--crown); outline-offset: 2px; }
+
+        /* ---------- Login ---------- */
+        #login {
+            min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px;
+        }
+        .login-box { width: 100%; max-width: 340px; }
+        .login-box h1 { font-family: var(--font-display); font-size: 34px; line-height: 1.1; margin: 0 0 4px; }
+        .login-box p { color: var(--muted); margin: 0 0 20px; }
+        .login-box label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+        .login-box input {
+            width: 100%; padding: 11px 12px; background: var(--card); color: var(--text);
+            border: 1px solid var(--line); border-radius: 6px;
+        }
+        .btn-primary {
+            margin-top: 18px; width: 100%; padding: 12px; border: 0; border-radius: 6px;
+            background: var(--crown); color: #000; font-weight: 700; cursor: pointer;
+        }
+        .btn-primary:disabled { opacity: .6; cursor: default; }
+        #login-msg { min-height: 1.5em; margin-top: 12px; color: var(--err); font-size: 14px; }
+
+        /* ---------- App ---------- */
+        #app { display: none; max-width: 1180px; margin: 0 auto; padding: 20px 20px 60px; }
+        header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 16px; border-bottom: 2px solid var(--crown); }
+        header h1 { font-family: var(--font-display); font-size: 28px; line-height: 1; margin: 0; }
+        header h1 span { color: var(--crown); }
+        .btn-ghost {
+            background: transparent; color: var(--text); border: 1px solid var(--line);
+            border-radius: 6px; padding: 8px 12px; cursor: pointer;
+        }
+        .btn-ghost:hover { border-color: var(--muted); }
+
+        .controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; padding: 16px 0; }
+        .ctl { display: flex; flex-direction: column; gap: 4px; }
+        .ctl > span { font-size: 12px; color: var(--muted); }
+        .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+        .seg button {
+            background: transparent; color: var(--text); border: 0; padding: 8px 12px; cursor: pointer;
+            border-right: 1px solid var(--line);
+        }
+        .seg button:last-child { border-right: 0; }
+        .seg button[aria-pressed="true"] { background: var(--crown); color: #000; font-weight: 600; }
+        select, input[type="date"] {
+            background: var(--card); color: var(--text); border: 1px solid var(--line);
+            border-radius: 6px; padding: 7px 10px; color-scheme: dark;
+        }
+        #custom-dates { display: none; gap: 8px; align-items: center; }
+        #custom-dates.show { display: flex; }
+
+        .status { color: var(--muted); font-size: 14px; min-height: 1.5em; margin: 0 0 8px; }
+        .status.error { color: var(--err); }
+
+        .totals { display: flex; flex-wrap: wrap; gap: 8px 28px; padding: 12px 0 20px; border-bottom: 1px solid var(--line); }
+        .totals div { font-size: 14px; color: var(--muted); }
+        .totals strong { display: block; font-family: var(--font-display); font-size: 26px; line-height: 1.1; color: var(--text); }
+
+        section { padding: 26px 0 8px; }
+        section h2 { font-family: var(--font-display); font-size: 22px; margin: 0 0 2px; }
+        section .sub { color: var(--muted); font-size: 14px; margin: 0 0 14px; }
+        .chart-box { position: relative; width: 100%; }
+        .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 32px; }
+        @media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+
+        .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; }
+        table { border-collapse: collapse; width: 100%; font-size: 14px; }
+        th, td { padding: 8px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+        th { color: var(--muted); font-weight: 600; font-size: 13px; background: var(--card); position: sticky; top: 0; }
+        th:first-child, td:first-child { text-align: left; position: sticky; left: 0; background: var(--card); }
+        td:first-child { font-weight: 600; }
+        td.total, th.total { font-weight: 700; color: var(--crown); }
+        td .e { display: block; font-size: 11px; color: var(--err); }
+        tr:last-child td { border-bottom: 0; }
+        tfoot td { font-weight: 700; background: var(--card); }
+        .empty { padding: 28px 0; color: var(--muted); }
+        .note { color: var(--muted); font-size: 13px; margin-top: 28px; max-width: 75ch; }
+
+        /* ---------- Install (PWA) ---------- */
+        #install-btn {
+            position: fixed; left: 50%; transform: translateX(-50%); z-index: 1000;
+            bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+            width: calc(100% - 32px); max-width: 340px; padding: 14px; border: 0; border-radius: 6px;
+            background: var(--crown); color: #000; font-weight: 700; cursor: pointer;
+            box-shadow: 0 4px 18px rgba(0, 0, 0, .6);
+        }
+        #install-btn[hidden] { display: none; }
+        #install-btn:disabled { opacity: .6; cursor: default; }
+        body.has-install #app { padding-bottom: 110px; }
+        body.has-install #login { padding-bottom: 96px; }
+    </style>
+</head>
+<body>
+
+<div id="login">
+    <form class="login-box" id="login-form" autocomplete="on">
+        <h1>Google API usage</h1>
+        <p>Admin sign-in for E&amp;C Courier.</p>
+        <label for="email">Email</label>
+        <input id="email" type="email" autocomplete="username" required>
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password" required>
+        <button class="btn-primary" id="login-btn" type="submit">Sign in</button>
+        <div id="login-msg" role="alert"></div>
+    </form>
+</div>
+
+<div id="app">
+    <header>
+        <h1><span>E&amp;C</span> Google API usage</h1>
+        <button class="btn-ghost" id="signout" type="button">Sign out</button>
+    </header>
+
+    <div class="controls">
+        <div class="ctl">
+            <span>Range</span>
+            <div class="seg" id="range-seg">
+                <button type="button" data-range="today" aria-pressed="false">Today</button>
+                <button type="button" data-range="7" aria-pressed="true">7 days</button>
+                <button type="button" data-range="30" aria-pressed="false">30 days</button>
+                <button type="button" data-range="custom" aria-pressed="false">Custom</button>
+            </div>
+        </div>
+        <div class="ctl" id="custom-dates">
+            <input type="date" id="from-date" aria-label="From date">
+            <span>to</span>
+            <input type="date" id="to-date" aria-label="To date">
+            <button class="btn-ghost" id="apply-custom" type="button">Show</button>
+        </div>
+        <label class="ctl">
+            <span>App</span>
+            <select id="app-filter">
+                <option value="all">Both apps</option>
+                <option value="planner">Route Planner</option>
+                <option value="watcher">Route Watcher</option>
+            </select>
+        </label>
+        <label class="ctl">
+            <span>User</span>
+            <select id="user-filter"><option value="all">All users</option></select>
+        </label>
+        <div class="ctl">
+            <span>Group APIs</span>
+            <div class="seg" id="detail-seg">
+                <button type="button" data-detail="family" aria-pressed="true">By API type</button>
+                <button type="button" data-detail="call" aria-pressed="false">By exact call</button>
+            </div>
+        </div>
+        <button class="btn-ghost" id="refresh" type="button">Refresh</button>
+    </div>
+
+    <p class="status" id="status" role="status"></p>
+
+    <div class="totals" id="totals"></div>
+
+    <section>
+        <h2>Requests by user</h2>
+        <p class="sub">Every Google request each person triggered in this range, split by API. Highest first.</p>
+        <div class="chart-box" id="users-box"><canvas id="users-chart"></canvas></div>
+    </section>
+
+    <div class="grid2">
+        <section>
+            <h2>Requests per day</h2>
+            <p class="sub">Daily totals, split by API.</p>
+            <div class="chart-box" style="height:300px"><canvas id="days-chart"></canvas></div>
+        </section>
+        <section>
+            <h2>Busiest hours</h2>
+            <p class="sub">All days in the range added together, by hour of the day.</p>
+            <div class="chart-box" style="height:300px"><canvas id="hours-chart"></canvas></div>
+        </section>
+    </div>
+
+    <section>
+        <h2>Every user and every API</h2>
+        <p class="sub">Request counts. Red numbers under a count are requests Google refused or failed.</p>
+        <div class="table-wrap" id="matrix"></div>
+    </section>
+
+    <p class="note">
+        Counts come from the Route Planner and Route Watcher apps themselves, so they show which person
+        triggered each request. Your Google Cloud billing report is the authoritative total for what Google
+        charged. Address autocomplete is counted when a suggestion is picked, not per keystroke. Dates and
+        hours are the local time of the device that made the request.
+    </p>
+</div>
+
+<script>
+    // ===== FIREBASE =====
+    firebase.initializeApp({
+        apiKey: "AIzaSyAKmgoXA4m3cRTmxJq4aUyva5SVvFbTNqg",
+        authDomain: "eandccourier-36fcc.firebaseapp.com",
+        databaseURL: "https://eandccourier-36fcc-default-rtdb.firebaseio.com",
+        projectId: "eandccourier-36fcc"
+    });
+    const auth = firebase.auth();
+    const db = firebase.database();
+    const ADMIN_EMAIL = 'justin@ec.com';
+    const MAX_DAYS = 92;
+
+    // ===== API NAMES =====
+    const FAMILIES = {
+        maps:       { label: 'Map loads',                 color: '#E8E400' },
+        routes:     { label: 'Routes API',                color: '#4FA3FF' },
+        geocode:    { label: 'Geocoding',                 color: '#FF8A3D' },
+        places:     { label: 'Places Autocomplete',       color: '#3DDC97' },
+        directions: { label: 'Directions (ETA fallback)', color: '#C77DFF' }
+    };
+    const CALLS = {
+        maps__main:             'Planner main map',
+        maps__picker:           'Planner address picker map',
+        maps__dispatch:         'Watcher dispatch map',
+        maps__history:          'Watcher history map',
+        maps__driver:           'Watcher driver map',
+        routes__path:           'Road path segment (Planner)',
+        routes__optimize:       'Auto-optimize (Planner)',
+        routes__eta:            'ETA (Watcher)',
+        geocode__job:           'Geocode saved stop (Planner)',
+        geocode__add_stop:      'Geocode new stop (Planner)',
+        geocode__picker_pin:    'Picker pin drop (Planner)',
+        geocode__picker_search: 'Picker search (Planner)',
+        places__address_pick:   'Address suggestion picked (Planner)',
+        places__picker_pick:    'Picker suggestion picked (Planner)',
+        directions__eta:        'ETA fallback (Watcher)'
+    };
+    function familyOf(api) { return String(api).split('__')[0]; }
+    function familyLabel(f) { return FAMILIES[f] ? FAMILIES[f].label : f; }
+    function callLabel(api) { return CALLS[api] || api; }
+
+    // Shades of the family color for exact-call mode, so related calls stay visually grouped.
+    function shade(hex, step) {
+        const n = parseInt(hex.slice(1), 16);
+        let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+        const k = [1, 0.72, 0.52, 1.25, 0.86][step % 5];
+        const f = v => Math.max(0, Math.min(255, Math.round(k >= 1 ? v + (255 - v) * (k - 1) * 2 : v * k)));
+        return 'rgb(' + f(r) + ',' + f(g) + ',' + f(b) + ')';
+    }
+
+    // ===== STATE =====
+    let records = [];      // { date, uid, app, api, hour, ok, err }
+    let names = {};        // uid -> username
+    let range = { from: null, to: null };
+    let detail = 'family';
+    const charts = {};
+
+    // ===== HELPERS =====
+    const $ = id => document.getElementById(id);
+    function esc(v) {
+        return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function pad(n) { return String(n).padStart(2, '0'); }
+    function ymd(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+    function parseYmd(s) { const p = s.split('-').map(Number); return new Date(p[0], p[1] - 1, p[2]); }
+    function daysBetween(from, to) {
+        const out = [];
+        const d = parseYmd(from), end = parseYmd(to);
+        while (d <= end && out.length <= MAX_DAYS) { out.push(ymd(d)); d.setDate(d.getDate() + 1); }
+        return out;
+    }
+    function userName(uid) { return names[uid] || ('user ' + uid.slice(0, 6)); }
+    function fmt(n) { return n.toLocaleString('en-CA'); }
+    function setStatus(msg, isError) { const el = $('status'); el.textContent = msg || ''; el.classList.toggle('error', !!isError); }
+    function keyOf(r) { return detail === 'family' ? familyOf(r.api) : r.api; }
+    function labelOf(k) { return detail === 'family' ? familyLabel(k) : callLabel(k); }
+    function colorMap(keys) {
+        const map = {}, used = {};
+        keys.forEach(k => {
+            const fam = detail === 'family' ? k : familyOf(k);
+            const base = FAMILIES[fam] ? FAMILIES[fam].color : '#8A8A80';
+            used[fam] = (used[fam] || 0);
+            map[k] = detail === 'family' ? base : shade(base, used[fam]++);
+        });
+        return map;
+    }
+
+    // ===== AUTH =====
+    $('login-form').addEventListener('submit', e => {
+        e.preventDefault();
+        $('login-msg').textContent = '';
+        $('login-btn').disabled = true;
+        auth.signInWithEmailAndPassword($('email').value.trim(), $('password').value)
+            .catch(err => { $('login-msg').textContent = 'Sign-in failed: ' + err.message; })
+            .finally(() => { $('login-btn').disabled = false; });
+    });
+    $('signout').addEventListener('click', () => auth.signOut());
+
+    auth.onAuthStateChanged(user => {
+        if (!user) {
+            $('app').style.display = 'none';
+            $('login').style.display = 'flex';
+            return;
+        }
+        if (String(user.email || '').toLowerCase() !== ADMIN_EMAIL) {
+            $('login-msg').textContent = 'This page is only for the admin account. Signed out.';
+            auth.signOut();
+            return;
+        }
+        $('login').style.display = 'none';
+        $('app').style.display = 'block';
+        setRange('7');
+    });
+
+    // ===== CONTROLS =====
+    function pressed(segId, attr, value) {
+        document.querySelectorAll('#' + segId + ' button').forEach(b =>
+            b.setAttribute('aria-pressed', String(b.dataset[attr] === value)));
+    }
+    function setRange(r) {
+        pressed('range-seg', 'range', r);
+        $('custom-dates').classList.toggle('show', r === 'custom');
+        if (r === 'custom') {
+            if (!$('from-date').value) $('from-date').value = range.from || ymd(new Date());
+            if (!$('to-date').value) $('to-date').value = range.to || ymd(new Date());
+            return;
+        }
+        const to = new Date();
+        const from = new Date();
+        if (r !== 'today') from.setDate(from.getDate() - (Number(r) - 1));
+        range = { from: ymd(from), to: ymd(to) };
+        load();
+    }
+    $('range-seg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setRange(b.dataset.range); });
+    $('apply-custom').addEventListener('click', () => {
+        let from = $('from-date').value, to = $('to-date').value;
+        if (!from || !to) { setStatus('Pick both a start and an end date.', true); return; }
+        if (from > to) { const t = from; from = to; to = t; }
+        if (daysBetween(from, to).length > MAX_DAYS) { setStatus('Pick a range of ' + MAX_DAYS + ' days or less.', true); return; }
+        range = { from, to };
+        load();
+    });
+    $('detail-seg').addEventListener('click', e => {
+        const b = e.target.closest('button'); if (!b) return;
+        detail = b.dataset.detail; pressed('detail-seg', 'detail', detail); render();
+    });
+    $('app-filter').addEventListener('change', render);
+    $('user-filter').addEventListener('change', render);
+    $('refresh').addEventListener('click', load);
+
+    // ===== LOAD =====
+    // One read for the whole range: developer/api_usage ordered by its date keys.
+    async function load() {
+        if (!range.from) return;
+        setStatus('Loading ' + range.from + (range.from === range.to ? '' : ' to ' + range.to) + '…');
+        try {
+            const [usageSnap, namesSnap] = await Promise.all([
+                db.ref('developer/api_usage').orderByKey().startAt(range.from).endAt(range.to).once('value'),
+                db.ref('developer/api_usage_names').once('value')
+            ]);
+            names = namesSnap.val() || {};
+            records = [];
+            const data = usageSnap.val() || {};
+            Object.keys(data).forEach(date => {
+                const byUid = data[date] || {};
+                Object.keys(byUid).forEach(uid => {
+                    const byApp = byUid[uid] || {};
+                    Object.keys(byApp).forEach(app => {
+                        const byApi = byApp[app] || {};
+                        Object.keys(byApi).forEach(api => {
+                            const byHour = byApi[api] || {};
+                            Object.keys(byHour).forEach(hour => {
+                                const c = byHour[hour] || {};
+                                const ok = Number(c.ok) || 0, err = Number(c.err) || 0;
+                                if (ok || err) records.push({ date, uid, app, api, hour: Number(hour), ok, err });
+                            });
+                        });
+                    });
+                });
+            });
+            fillUserFilter();
+            setStatus('Updated at ' + new Date().toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' }));
+            render();
+        } catch (err) {
+            console.error(err);
+            setStatus(err && err.code === 'PERMISSION_DENIED'
+                ? 'The database refused the read. Check that the api_usage read rule allows ' + ADMIN_EMAIL + '.'
+                : 'Could not load usage: ' + (err && err.message ? err.message : err), true);
+        }
+    }
+
+    function fillUserFilter() {
+        const sel = $('user-filter');
+        const keep = sel.value;
+        const uids = Array.from(new Set(records.map(r => r.uid)))
+            .sort((a, b) => userName(a).localeCompare(userName(b)));
+        sel.innerHTML = '<option value="all">All users</option>' +
+            uids.map(u => '<option value="' + esc(u) + '">' + esc(userName(u)) + '</option>').join('');
+        sel.value = uids.includes(keep) ? keep : 'all';
+    }
+
+    // ===== RENDER =====
+    function filtered() {
+        const app = $('app-filter').value, user = $('user-filter').value;
+        return records.filter(r => (app === 'all' || r.app === app) && (user === 'all' || r.uid === user));
+    }
+
+    function render() {
+        const rows = filtered();
+        const total = r => r.ok + r.err;
+
+        // Keys (API type or exact call) ordered by volume, largest first.
+        const keyTotals = {};
+        rows.forEach(r => { const k = keyOf(r); keyTotals[k] = (keyTotals[k] || 0) + total(r); });
+        const keys = Object.keys(keyTotals).sort((a, b) => keyTotals[b] - keyTotals[a]);
+        const colors = colorMap(keys);
+
+        // Per user
+        const userTotals = {}, userKey = {}, userErr = {};
+        rows.forEach(r => {
+            const k = keyOf(r);
+            userTotals[r.uid] = (userTotals[r.uid] || 0) + total(r);
+            userErr[r.uid] = (userErr[r.uid] || 0) + r.err;
+            userKey[r.uid] = userKey[r.uid] || {};
+            const cell = userKey[r.uid][k] = userKey[r.uid][k] || { n: 0, err: 0 };
+            cell.n += total(r); cell.err += r.err;
+        });
+        const uids = Object.keys(userTotals).sort((a, b) => userTotals[b] - userTotals[a]);
+
+        renderTotals(rows, uids, userTotals, keys, keyTotals);
+        renderUsers(uids, keys, userKey, colors);
+        renderDays(rows, keys, colors);
+        renderHours(rows, keys, colors);
+        renderMatrix(uids, keys, userKey, userTotals, userErr, keyTotals);
+    }
+
+    function renderTotals(rows, uids, userTotals, keys, keyTotals) {
+        const all = rows.reduce((s, r) => s + r.ok + r.err, 0);
+        const errs = rows.reduce((s, r) => s + r.err, 0);
+        const top = uids[0];
+        const topKey = keys[0];
+        $('totals').innerHTML =
+            '<div><strong>' + fmt(all) + '</strong>Requests</div>' +
+            '<div><strong>' + fmt(errs) + '</strong>Refused or failed</div>' +
+            '<div><strong>' + (top ? esc(userName(top)) : '—') + '</strong>' +
+                (top ? 'Most requests (' + fmt(userTotals[top]) + ')' : 'Most requests') + '</div>' +
+            '<div><strong>' + (topKey ? esc(labelOf(topKey)) : '—') + '</strong>' +
+                (topKey ? 'Busiest API (' + fmt(keyTotals[topKey]) + ')' : 'Busiest API') + '</div>';
+    }
+
+    // Shared Chart.js look
+    Chart.defaults.color = '#A3A396';
+    Chart.defaults.borderColor = '#2A2A26';
+    Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+    function baseOptions(horizontal) {
+        return {
+            responsive: true, maintainAspectRatio: false, animation: false,
+            indexAxis: horizontal ? 'y' : 'x',
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 12, boxHeight: 12, padding: 14 } },
+                tooltip: {
+                    callbacks: {
+                        footer: items => 'Total: ' + fmt(items.reduce((s, i) => s + (i.raw || 0), 0))
+                    }
+                }
+            },
+            scales: {
+                x: { stacked: true, beginAtZero: true, grid: { display: horizontal }, ticks: horizontal ? { precision: 0 } : {} },
+                y: { stacked: true, beginAtZero: true, grid: { display: !horizontal }, ticks: horizontal ? {} : { precision: 0 } }
+            }
+        };
+    }
+    function draw(id, type, labels, datasets, options) {
+        if (charts[id]) charts[id].destroy();
+        charts[id] = new Chart($(id), { type, data: { labels, datasets }, options });
+    }
+    function datasetsFor(keys, colors, valueFor) {
+        return keys.map(k => ({
+            label: labelOf(k), data: valueFor(k), backgroundColor: colors[k],
+            borderWidth: 0, borderRadius: 2, maxBarThickness: 46
+        }));
+    }
+
+    function renderUsers(uids, keys, userKey, colors) {
+        // Height grows with the number of people so every bar stays readable.
+        $('users-box').style.height = Math.max(200, uids.length * 44 + 110) + 'px';
+        draw('users-chart', 'bar', uids.map(userName),
+            datasetsFor(keys, colors, k => uids.map(u => (userKey[u][k] ? userKey[u][k].n : 0))),
+            baseOptions(true));
+    }
+
+    function renderDays(rows, keys, colors) {
+        const days = daysBetween(range.from, range.to);
+        const byDay = {};
+        rows.forEach(r => {
+            const k = keyOf(r);
+            byDay[r.date] = byDay[r.date] || {};
+            byDay[r.date][k] = (byDay[r.date][k] || 0) + r.ok + r.err;
+        });
+        const labels = days.map(d => parseYmd(d).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }));
+        draw('days-chart', 'bar', labels,
+            datasetsFor(keys, colors, k => days.map(d => (byDay[d] && byDay[d][k]) || 0)),
+            baseOptions(false));
+    }
+
+    function renderHours(rows, keys, colors) {
+        const hours = Array.from({ length: 24 }, (_, i) => i);
+        const byHour = {};
+        rows.forEach(r => {
+            const k = keyOf(r);
+            byHour[r.hour] = byHour[r.hour] || {};
+            byHour[r.hour][k] = (byHour[r.hour][k] || 0) + r.ok + r.err;
+        });
+        const labels = hours.map(h => (h % 12 === 0 ? 12 : h % 12) + (h < 12 ? 'a' : 'p'));
+        draw('hours-chart', 'bar', labels,
+            datasetsFor(keys, colors, k => hours.map(h => (byHour[h] && byHour[h][k]) || 0)),
+            baseOptions(false));
+    }
+
+    function renderMatrix(uids, keys, userKey, userTotals, userErr, keyTotals) {
+        if (!uids.length) {
+            $('matrix').innerHTML = '<div class="empty" style="padding:20px">No Google requests recorded for this range and filter. ' +
+                'Counts start appearing after the updated Route Planner and Route Watcher are in use.</div>';
+            return;
+        }
+        const keyErr = {};
+        uids.forEach(u => keys.forEach(k => { if (userKey[u][k]) keyErr[k] = (keyErr[k] || 0) + userKey[u][k].err; }));
+        const cell = (n, e) => (n ? fmt(n) : '<span style="color:#55554C">0</span>') + (e ? '<span class="e">' + fmt(e) + ' failed</span>' : '');
+        let html = '<table><thead><tr><th scope="col">User</th>' +
+            keys.map(k => '<th scope="col">' + esc(labelOf(k)) + '</th>').join('') +
+            '<th scope="col" class="total">Total</th></tr></thead><tbody>';
+        uids.forEach(u => {
+            html += '<tr><td>' + esc(userName(u)) + '</td>' +
+                keys.map(k => { const c = userKey[u][k]; return '<td>' + cell(c ? c.n : 0, c ? c.err : 0) + '</td>'; }).join('') +
+                '<td class="total">' + cell(userTotals[u], userErr[u]) + '</td></tr>';
+        });
+        const grand = uids.reduce((s, u) => s + userTotals[u], 0);
+        const grandErr = uids.reduce((s, u) => s + userErr[u], 0);
+        html += '</tbody><tfoot><tr><td>All users</td>' +
+            keys.map(k => '<td>' + cell(keyTotals[k], keyErr[k] || 0) + '</td>').join('') +
+            '<td class="total">' + cell(grand, grandErr) + '</td></tr></tfoot></table>';
+        $('matrix').innerHTML = html;
+    }
+</script>
+
+<button id="install-btn" type="button" hidden>Install now</button>
+
+<script>
+    // ===== PWA: service worker + install button =====
+    (function () {
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function () {
+                navigator.serviceWorker.register('./sw.js').catch(function (err) {
+                    console.warn('Service worker registration failed:', err);
+                });
+            });
+        }
+
+        const btn = document.getElementById('install-btn');
+        let deferredPrompt = null;
+
+        function isStandalone() {
+            return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+        }
+        function showInstall() {
+            btn.hidden = false;
+            document.body.classList.add('has-install');
+        }
+        function hideInstall() {
+            btn.hidden = true;
+            document.body.classList.remove('has-install');
+        }
+
+        // Chrome fires this only when the app is installable and not already installed.
+        window.addEventListener('beforeinstallprompt', function (e) {
+            e.preventDefault();
+            if (isStandalone()) return;
+            deferredPrompt = e;
+            showInstall();
+        });
+
+        btn.addEventListener('click', function () {
+            if (!deferredPrompt) { hideInstall(); return; }
+            const promptEvent = deferredPrompt;
+            deferredPrompt = null; // a prompt event can only be used once
+            btn.disabled = true;
+            promptEvent.prompt();
+            promptEvent.userChoice.then(function () {
+                btn.disabled = false;
+                hideInstall();
+            }).catch(function () {
+                btn.disabled = false;
+                hideInstall();
+            });
+        });
+
+        window.addEventListener('appinstalled', function () {
+            deferredPrompt = null;
+            hideInstall();
+        });
+
+        if (isStandalone()) hideInstall();
+    })();
+</script>
+</body>
+</html>

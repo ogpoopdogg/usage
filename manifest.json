@@ -1,0 +1,15 @@
+{
+  "id": "./",
+  "name": "E&C Google API Usage",
+  "short_name": "E&C API Usage",
+  "description": "Admin view of Google API usage across the E&C Route Planner and Route Watcher.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0A0A09",
+  "theme_color": "#0A0A09",
+  "icons": [
+    { "src": "icon.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
