@@ -4,8 +4,8 @@
 // Firebase, Google Fonts and Chart.js (other domains) are never touched.
 
 const CACHE_PREFIX = 'ec-api-usage-';
-const CACHE = CACHE_PREFIX + 'v1';
-const PRECACHE = ['./', './manifest.json', './icon.png'];
+const CACHE = CACHE_PREFIX + 'v2';
+const PRECACHE = ['./', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (event) => {
     event.waitUntil(
