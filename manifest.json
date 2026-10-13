@@ -1,5 +1,5 @@
 {
-  "id": "./",
+  "id": "/usage/",
   "name": "E&C Google API Usage",
   "short_name": "E&C API Usage",
   "description": "Admin view of Google API usage across the E&C Route Planner and Route Watcher.",
