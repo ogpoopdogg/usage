@@ -1,0 +1,12 @@
+{
+  "security_log": {
+    ".read": "auth != null && auth.token.email.toLowerCase() === 'justin@ec.com'",
+    ".write": false,
+    "acks": {
+      "$alertId": {
+        ".write": "auth != null && auth.token.email.toLowerCase() === 'justin@ec.com'",
+        ".validate": "newData.isBoolean() && root.child('security_log/alerts').child($alertId).exists()"
+      }
+    }
+  }
+}
