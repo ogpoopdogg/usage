@@ -1,8 +1,8 @@
 {
   "id": "/usage/",
-  "name": "E&C Google API Usage",
-  "short_name": "E&C API Usage",
-  "description": "Admin view of Google API usage across the E&C Route Planner and Route Watcher.",
+  "name": "E&C Usage and Security",
+  "short_name": "E&C Usage",
+  "description": "Admin view of Google API usage, sign-ins and database changes across the E&C apps.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

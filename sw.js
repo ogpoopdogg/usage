@@ -1,11 +1,11 @@
-// E&C Google API Usage — service worker
+// E&C Usage and Security — service worker
 // Network-first for this app's own files so updates show up right away;
 // the cached copy is only used when the network is unavailable.
 // Firebase, Google Fonts and Chart.js (other domains) are never touched.
 
 const CACHE_PREFIX = 'ec-api-usage-';
-const CACHE = CACHE_PREFIX + 'v2';
-const PRECACHE = ['./', './manifest.json', './icon-192.png', './icon-512.png'];
+const CACHE = CACHE_PREFIX + 'v3';
+const PRECACHE = ['./', './security.js', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (event) => {
     event.waitUntil(
