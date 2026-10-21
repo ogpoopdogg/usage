@@ -19,11 +19,17 @@
         user_deleted:    { label: 'Account deleted',    tone: 'warn' },
         account_changed: { label: 'Account changed',    tone: 'warn' },
         email_sent:      { label: 'Email sent',         tone: 'muted' },
-        sms_sent:        { label: 'SMS code sent',      tone: 'muted' }
+        sms_sent:        { label: 'SMS code sent',      tone: 'muted' },
+        // PlutoScan (sent by plutoscan-audit/ through auditIngest)
+        purchase:         { label: 'Purchase',               tone: 'ok' },
+        purchase_removed: { label: 'Paid access removed',    tone: 'warn' },
+        course_denied:    { label: 'Turned away from course', tone: 'bad' },
+        checkout:         { label: 'Checkout',               tone: 'info' },
+        visit:            { label: 'Visit',                  tone: 'muted' }
     };
 
     let hours = 24;
-    let data = { events: [], changes: [], alerts: [], acks: {}, census: {}, devices: {}, stats: {}, cut: {} };
+    let data = { events: [], changes: [], alerts: [], acks: {}, census: {}, devices: {}, stats: {}, pluto: {}, cut: {} };
     let shown = { events: SHOW_STEP, changes: SHOW_STEP, accounts: SHOW_STEP };
     let started = false;
     let timer = null;
@@ -104,17 +110,18 @@
         const since = Date.now() - hours * 3600 * 1000;
         if (auto !== true) status('Loading the last ' + rangeLabel() + '…');
         try {
-            const [events, changes, alerts, acks, census, devices, stats] = await Promise.all([
+            const [events, changes, alerts, acks, census, devices, stats, pluto] = await Promise.all([
                 readRange('events', since),
                 readRange('changes', since),
                 readRange('alerts', Date.now() - Math.max(hours, 24 * 30) * 3600 * 1000),
                 db.ref(LOG + '/acks').once('value'),
                 db.ref(LOG + '/census').once('value'),
                 db.ref(LOG + '/devices').once('value'),
-                db.ref(LOG + '/stats').orderByKey().limitToLast(31).once('value')
+                db.ref(LOG + '/stats').orderByKey().limitToLast(31).once('value'),
+                db.ref(LOG + '/ext/plutoscan/census').once('value')
             ]);
             data = Object.assign(data, { events, changes, alerts, acks: acks.val() || {}, census: census.val() || {},
-                devices: devices.val() || {}, stats: stats.val() || {} });
+                devices: devices.val() || {}, stats: stats.val() || {}, pluto: pluto.val() || {} });
             if (auto !== true) shown = { events: SHOW_STEP, changes: SHOW_STEP, accounts: SHOW_STEP };
             fillFilters();
             render();
@@ -171,7 +178,12 @@
             tile(n('signin_refused'), 'Refused accounts', n('signin_refused') ? 'warn' : '') +
             tile(n('user_created') + n('signup'), 'New accounts') +
             tile(data.changes.length, 'Database changes') +
-            tile(deletes, 'Deletes');
+            tile(deletes, 'Deletes') +
+            (Object.keys(data.pluto).length || n('purchase') || n('course_denied')
+                ? tile(n('purchase'), 'PlutoScan purchases') +
+                  tile(n('course_denied'), 'Turned away from the course', n('course_denied') ? 'warn' : '') +
+                  tile(Object.values(data.pluto).filter(a => a && a.paid).length, 'PlutoScan paid accounts (of ' + fmt(Object.keys(data.pluto).length) + ')')
+                : '');
     }
 
     function renderAlerts() {
@@ -278,7 +290,8 @@
         const type = $('sec-ev-type').value, app = $('sec-ev-app').value;
         const q = $('sec-ev-q').value.trim().toLowerCase();
         const rows = data.events.filter(e =>
-            (type === 'all' || (type === 'problems' ? !e.ok : e.type === type)) &&
+            // Visits are many and rarely interesting, so only their own filter shows them.
+            (type === 'all' ? e.type !== 'visit' : type === 'problems' ? !e.ok : e.type === type) &&
             (app === 'all' || e.app === app) &&
             (!q || [e.email, e.claimedEmail, e.ip, e.uid, e.phone, e.code, e.reason, e.ua].some(v => matches(v, q))));
         if (!rows.length) { $('sec-events').innerHTML = '<div class="empty" style="padding:20px">No sign-in activity matches.</div>'; return; }
@@ -293,11 +306,15 @@
             if (e.smsType) bits.push(e.smsType);
             if (e.changes) bits.push(e.changes.map(c => c.label + ': ' + short(c.b) + ' → ' + short(c.a)).join('; '));
             if (e.type === 'signin_refused') bits.push(e.verified ? 'token checked' : 'not verified' + (e.tokenError ? ' (' + e.tokenError + ')' : ''));
+            if (e.step) bits.push('step: ' + e.step);
+            if (e.type === 'visit' || e.type === 'course_denied') bits.push(e.page || '');
+            if (e.referrer) bits.push('from: ' + e.referrer);
+            if (e.type === 'course_denied' || (e.type === 'checkout' && e.step === 'started')) bits.push(e.verified ? 'token checked' : 'not signed in or not verified');
             if (e.claimedEmail) bits.push('page said ' + e.claimedEmail);
             if (e.type === 'signup' && e.ok === false) bits.push('blocked');
             return bits.join(' · ');
         };
-        const tone = e => (e.type === 'signup' && e.ok === false ? 'bad' : TYPES[e.type] ? TYPES[e.type].tone : 'muted');
+        const tone = e => ((e.type === 'signup' || e.type === 'checkout' || e.type === 'purchase') && e.ok === false ? 'bad' : TYPES[e.type] ? TYPES[e.type].tone : 'muted');
         $('sec-events').innerHTML = '<table class="log"><thead><tr><th scope="col">Time</th><th scope="col">What</th><th scope="col">Account</th>' +
             '<th scope="col">App</th><th scope="col">IP address</th><th scope="col">Device</th><th scope="col">Details</th></tr></thead><tbody>' +
             rows.slice(0, shown.events).map(e => '<tr>' +
@@ -370,6 +387,7 @@
     function renderAccounts() {
         const q = $('sec-acc-q').value.trim().toLowerCase();
         const kind = $('sec-acc-kind').value;
+        if (kind === 'pluto' || kind === 'pluto_paid' || kind === 'pluto_unpaid') { renderPlutoAccounts(kind, q); return; }
         const uids = Object.keys(data.census);
         if (!uids.length) {
             $('sec-accounts').innerHTML = '<div class="empty" style="padding:20px">The account list fills in within 30 minutes of the functions being deployed.</div>';
@@ -398,6 +416,37 @@
                     '<td>' + esc(date(a.created)) + '</td>' +
                     '<td>' + esc(date(a.lastSignIn)) + '</td>' +
                     '<td class="wrap">' + esc(devices.map(d => d.name || deviceName(d.ua)).join(', ')) + '</td>' +
+                    '<td>' + notes.join(' ') + '</td></tr>';
+            }).join('') + '</tbody></table>' + more('accounts', rows.length);
+    }
+
+    // PlutoScan accounts (its own Firebase project), from auditPlutoCensus every 30 minutes
+    function renderPlutoAccounts(kind, q) {
+        const uids = Object.keys(data.pluto);
+        if (!uids.length) {
+            $('sec-accounts').innerHTML = '<div class="empty" style="padding:20px">The PlutoScan account list fills in within 30 minutes of its functions being deployed (see plutoscan-audit/README.md).</div>';
+            return;
+        }
+        const rows = uids.map(uid => Object.assign({ uid }, data.pluto[uid]))
+            .filter(a => (kind === 'pluto' || (kind === 'pluto_paid') === !!a.paid) &&
+                (!q || [a.email, a.uid, a.providers].some(v => matches(v, q))))
+            .sort((a, b) => (Date.parse(b.created) || 0) - (Date.parse(a.created) || 0));
+        const date = s => (s && Date.parse(s) ? when(Date.parse(s)) : '');
+        const paid = uids.filter(u => data.pluto[u] && data.pluto[u].paid).length;
+        $('sec-accounts').innerHTML = '<p class="status" style="padding:0 0 8px">' + fmt(uids.length) + ' PlutoScan accounts, ' + fmt(paid) + ' paid. Newest first.</p>' +
+            '<table class="log"><thead><tr><th scope="col">Account</th><th scope="col">Paid</th><th scope="col">Sign-in methods</th>' +
+            '<th scope="col">Created</th><th scope="col">Last sign-in</th><th scope="col">Notes</th></tr></thead><tbody>' +
+            rows.slice(0, shown.accounts).map(a => {
+                const notes = [];
+                if (a.disabled) notes.push(pill('disabled', 'warn'));
+                if (a.claims) notes.push(pill('custom claims: ' + a.claims, 'bad'));
+                if (a.email && !a.verified) notes.push(pill('email not verified', 'muted'));
+                return '<tr>' +
+                    '<td>' + esc(a.email || a.uid) + '<small class="mono">' + esc(a.uid) + '</small></td>' +
+                    '<td>' + (a.paid ? pill('paid', 'ok') : pill('not paid', 'muted')) + '</td>' +
+                    '<td>' + esc(a.providers || '') + '</td>' +
+                    '<td>' + esc(date(a.created)) + '</td>' +
+                    '<td>' + esc(date(a.lastSignIn)) + '</td>' +
                     '<td>' + notes.join(' ') + '</td></tr>';
             }).join('') + '</tbody></table>' + more('accounts', rows.length);
     }
@@ -439,7 +488,7 @@
         hide() { clearInterval(timer); timer = null; },
         reset() {
             clearInterval(timer); timer = null;
-            data = { events: [], changes: [], alerts: [], acks: {}, census: {}, devices: {}, stats: {}, cut: {} };
+            data = { events: [], changes: [], alerts: [], acks: {}, census: {}, devices: {}, stats: {}, pluto: {}, cut: {} };
         }
     };
 })();
