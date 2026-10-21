@@ -13,6 +13,9 @@
      devices/{uid}/{hash}  devices each account has signed in from: { first, last, ua, ip }
      census/{uid}     the last look at each account, to spot changes made outside the apps
      stats/{day}/{name}    how many times each watcher ran, to keep an eye on cost
+     ext/{app}/census/{uid}  accounts of another Firebase project (PlutoScan), sent by its own
+                        audit functions to auditIngest; its events, changes and alerts go into the
+                        lists above with app set to that project
    Ids are push ids, which sort by time, so the page reads a time range by key with no index. */
 'use strict';
 
@@ -302,8 +305,81 @@ function censusAlertLevel(diff, email) {
   return null;
 }
 
+// ---------------------------------------------------------------- other projects (auditIngest)
+
+/** Firebase projects whose own audit functions forward here. The key is the app name the page shows. */
+const INGEST_APPS = { plutoscan: { label: 'PlutoScan' } };
+const INGEST_MAX = 16000;     // largest body another project may send
+const LEVELS = new Set(['high', 'medium', 'low']);
+const UID = /^[A-Za-z0-9_-]{1,128}$/;
+
+/** Plain JSON only, cut to a size the log can hold. */
+function plain(v, depth) {
+  if (v == null) return null;
+  if (typeof v === 'string') return v.slice(0, VALUE_MAX);
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v === 'boolean') return v;
+  if (typeof v !== 'object' || (depth || 0) > 6) return null;
+  const out = Array.isArray(v) ? [] : {};
+  let n = 0;
+  for (const [k, x] of Object.entries(v)) {
+    if (++n > 200) break;
+    const key = Array.isArray(v) ? k : (String(k).replace(/[.#$[\]/]/g, ',').slice(0, 100) || '_');
+    const val = plain(x, (depth || 0) + 1);
+    if (val != null) { if (Array.isArray(out)) out.push(val); else out[key] = val; }
+  }
+  return out;
+}
+
+/**
+ * Checks what another project's audit functions sent to auditIngest. Returns
+ * { kind: 'events' | 'changes' | 'alerts', entry } or { kind: 'census', set: { uid: record | null } },
+ * or null if it isn't one of those. The app name is always set here, never taken from the body.
+ */
+function ingestEntry(text, app, at) {
+  if (!INGEST_APPS[app] || typeof text !== 'string' || !text || text.length > INGEST_MAX) return null;
+  let body;
+  try { body = JSON.parse(text); } catch (e) { return null; }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const label = INGEST_APPS[app].label;
+  if (body.kind === 'census') {
+    if (!body.set || typeof body.set !== 'object' || Array.isArray(body.set)) return null;
+    const set = {};
+    for (const [uid, rec] of Object.entries(body.set).slice(0, 500)) {
+      if (!UID.test(uid)) continue;
+      set[uid] = rec && typeof rec === 'object' && !Array.isArray(rec) ? plain(rec) : null;
+    }
+    return { kind: 'census', set };
+  }
+  const e = body.entry;
+  if (!e || typeof e !== 'object' || Array.isArray(e)) return null;
+  const entry = plain(e);
+  // Their clock is kept for reference; the log is ordered by when it arrived here.
+  if (Number.isFinite(e.at)) entry.sentAt = e.at;
+  entry.at = at;
+  entry.app = app;
+  if (body.kind === 'events') {
+    if (!/^[a-z_]{1,30}$/.test(String(e.type || ''))) return null;
+    entry.staff = false;
+    return { kind: 'events', entry };
+  }
+  if (body.kind === 'changes') {
+    entry.area = label + ': ' + clip(e.area || 'database', 80);
+    return { kind: 'changes', entry };
+  }
+  if (body.kind === 'alerts') {
+    entry.level = LEVELS.has(e.level) ? e.level : 'medium';
+    entry.title = clip(label + ': ' + (e.title || 'alert'), 200);
+    entry.detail = clip(e.detail, 600);
+    entry.src = clip(app + (e.src ? '/' + e.src : ''), 60);
+    return { kind: 'alerts', entry };
+  }
+  return null;
+}
+
 module.exports = {
-  ADMIN_EMAILS, WATCHES, REPORT_MAX,
+  ADMIN_EMAILS, WATCHES, REPORT_MAX, INGEST_APPS,
+  ingestEntry,
   clip, normEmail, safeKey, hash, dayKey, bucket, requestIp, pushIdAt,
   parseReport, reportEntry, authEventEntry, deviceName, deviceKey,
   actionOf, diffFields, countLeaves, keepValue, changeEntry, changeAlerts,

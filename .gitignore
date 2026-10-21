@@ -2,3 +2,5 @@ node_modules/
 firebase-debug*.log
 .firebase/
 *-debug.log
+.secret.local
+.env.local

@@ -22,6 +22,11 @@
      changes with no sign-in, non-staff accounts changing staff data, large deletes, and bursts
      of deletes by one account.
 
+   Other projects
+   - auditIngest: PlutoScan (its own Firebase project) runs its own audit functions and sends
+     what they log here, with a secret key, so it shows in the same Security tab. Its code is
+     in ../plutoscan-audit.
+
    Upkeep
    - auditPrune (daily): drops events and changes after 90 days, alerts after a year.
 
@@ -32,11 +37,13 @@
 const { onValueWritten } = require('firebase-functions/v2/database');
 const { onRequest } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
+const { defineSecret } = require('firebase-functions/params');
 const { beforeUserSignedIn, beforeEmailSent, beforeSmsSent } = require('firebase-functions/v2/identity');
 const functionsV1 = require('firebase-functions/v1');
 const logger = require('firebase-functions/logger');
 const admin = require('firebase-admin');
 const { ServerValue } = require('firebase-admin/database');
+const crypto = require('crypto');
 const L = require('./lib');
 
 admin.initializeApp();
@@ -326,6 +333,50 @@ function watcher(watch) {
 
 for (const w of L.WATCHES) exports['audit' + w.name[0].toUpperCase() + w.name.slice(1)] = watcher(w);
 
+// ---------------------------------------------------------------- other projects
+
+// The same random value is stored as a secret in each project that sends here (see the README).
+const PLUTOSCAN_AUDIT_KEY = defineSecret('PLUTOSCAN_AUDIT_KEY');
+const INGEST_KEYS = { plutoscan: PLUTOSCAN_AUDIT_KEY };
+
+function sameKey(given, expected) {
+  const a = Buffer.from(String(given || ''));
+  const b = Buffer.from(String(expected || ''));
+  return a.length > 0 && b.length >= 32 && a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+exports.auditIngest = onRequest(
+  { region: REGION, memory: MEMORY, invoker: 'public', maxInstances: 5, concurrency: 40, secrets: [PLUTOSCAN_AUDIT_KEY] },
+  async (req, res) => {
+    if (req.method !== 'POST') { res.status(405).end(); return; }
+    const at = Date.now();
+    const app = String(req.get('x-audit-app') || '');
+    const key = INGEST_KEYS[app];
+    if (!key || !sameKey(req.get('x-audit-key'), key.value())) {
+      // Someone guessing at the key: count it once per IP per window, and say so once.
+      const ip = L.requestIp(req);
+      const n = await count('ingest_refused/' + L.bucket(at, REPORT_WINDOW) + '/' + L.safeKey(ip)).catch(() => 0);
+      if (n === 5) {
+        await raise({ level: 'high', title: 'Wrong key sent to auditIngest', detail: 'IP ' + ip + ' sent ' + n + ' requests with a wrong or missing key in 10 minutes (app: ' + L.clip(app || 'none', 30) + ').' }, 'ingest', at).catch(() => {});
+      }
+      res.status(403).end();
+      return;
+    }
+    try {
+      const raw = Buffer.isBuffer(req.rawBody) ? req.rawBody.toString('utf8') : typeof req.body === 'string' ? req.body : JSON.stringify(req.body || null);
+      const got = L.ingestEntry(raw, app, at);
+      if (!got) { res.status(400).end(); return; }
+      if (got.kind === 'census') await log('ext/' + app + '/census').update(got.set);
+      else await log(got.kind).push(got.entry);
+      await tally('auditIngest', at);
+      res.status(204).end();
+    } catch (e) {
+      logger.error('Forwarded entry not logged', e);
+      res.status(500).end();
+    }
+  }
+);
+
 // ---------------------------------------------------------------- upkeep
 
 /** Deletes children of a push-id list older than `age`. Push ids sort by time, so this reads only the old ones. */
@@ -355,7 +406,7 @@ exports.auditPrune = onSchedule({ schedule: 'every day 03:30', timeZone: 'Americ
   if (Object.keys(acks).length) await log('acks').update(Object.fromEntries(Object.keys(acks).map((k) => [k, null])));
   // Counters are kept in time buckets (bucket = time / window); drop old buckets
   const counters = (await log('counters').once('value')).val() || {};
-  const windows = { failed_email: FAIL_WINDOW, failed_ip: FAIL_WINDOW, reports: REPORT_WINDOW, deletes: DELETE_WINDOW };
+  const windows = { failed_email: FAIL_WINDOW, failed_ip: FAIL_WINDOW, reports: REPORT_WINDOW, deletes: DELETE_WINDOW, ingest_refused: REPORT_WINDOW };
   const updates = {};
   for (const [kind, buckets] of Object.entries(counters)) {
     const ms = windows[kind];
