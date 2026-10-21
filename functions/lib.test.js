@@ -166,3 +166,33 @@ test('the census spots changes made outside the apps', () => {
   // A census record written before a field existed is not reported as a change
   assert.deepEqual(L.censusDiff({ email: 'a' }, { email: 'a', phone: null, claims: null }), []);
 });
+
+test('entries forwarded by another project are checked and labelled here', () => {
+  const send = (o) => JSON.stringify(o);
+  assert.equal(L.ingestEntry(send({ kind: 'events', entry: { type: 'signin' } }), 'garage', AT), null);
+  assert.equal(L.ingestEntry('nope', 'plutoscan', AT), null);
+  assert.equal(L.ingestEntry(send({ kind: 'events', entry: { type: '<b>' } }), 'plutoscan', AT), null);
+  assert.equal(L.ingestEntry(send({ kind: 'wipe', entry: {} }), 'plutoscan', AT), null);
+  assert.equal(L.ingestEntry('x'.repeat(20000), 'plutoscan', AT), null);
+
+  const ev = L.ingestEntry(send({ kind: 'events', entry: { at: 5, type: 'signin', app: 'timeclock', staff: true, email: 'a@b.com', emailType: 'PASSWORD_RESET', 'bad.key': 1 } }), 'plutoscan', AT);
+  assert.equal(ev.kind, 'events');
+  assert.equal(ev.entry.app, 'plutoscan');
+  assert.equal(ev.entry.staff, false);
+  assert.equal(ev.entry.at, AT);
+  assert.equal(ev.entry.sentAt, 5);
+  assert.equal(ev.entry.emailType, 'PASSWORD_RESET');
+  assert.equal(ev.entry['bad,key'], 1);
+
+  const al = L.ingestEntry(send({ kind: 'alerts', entry: { level: 'urgent', title: 'New purchase', detail: 'x', src: 'users' } }), 'plutoscan', AT);
+  assert.equal(al.entry.level, 'medium');
+  assert.equal(al.entry.title, 'PlutoScan: New purchase');
+  assert.equal(al.entry.src, 'plutoscan/users');
+
+  const ch = L.ingestEntry(send({ kind: 'changes', entry: { area: 'Accounts', path: 'users/u1', fields: [{ f: 'paid', b: null, a: true }] } }), 'plutoscan', AT);
+  assert.equal(ch.entry.area, 'PlutoScan: Accounts');
+  assert.deepEqual(ch.entry.fields, [{ f: 'paid', a: true }]);
+
+  const ce = L.ingestEntry(send({ kind: 'census', set: { u1: { email: 'a@b.com', paid: true }, 'bad/uid': { email: 'x' }, u2: null } }), 'plutoscan', AT);
+  assert.deepEqual(ce.set, { u1: { email: 'a@b.com', paid: true }, u2: null });
+});

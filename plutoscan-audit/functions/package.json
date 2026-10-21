@@ -1,0 +1,14 @@
+{
+  "name": "plutoscan-audit-functions",
+  "private": true,
+  "description": "PlutoScan security log: sign-ups, sign-ins, purchases, course access and account data changes, sent on to the Security tab of the E&C usage page",
+  "main": "index.js",
+  "engines": { "node": "22" },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.10.0",
+    "firebase-functions": "^7.4.0"
+  }
+}

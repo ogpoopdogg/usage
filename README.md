@@ -7,6 +7,8 @@ Admin page for E&C Courier, open only to justin@ec.com. It has two tabs:
 
 Open the Security tab directly with `#security` at the end of the address.
 
+PlutoScan (its own Firebase project, `plutoscan`) has its own audit functions in `plutoscan-audit/`. They send what they log to `auditIngest` here, so PlutoScan entries show in the same lists with app `plutoscan`. See `plutoscan-audit/README.md`.
+
 ## What the Security tab shows
 
 | Part | What's in it | Where it comes from |
@@ -34,6 +36,7 @@ Open the Security tab directly with `#security` at the end of the address.
 | An account changed outside the apps: email, custom claims (high); disabled, sign-in methods, password reset, verified (medium for staff) | high / medium |
 | A staff account signs in from a new kind of device | low |
 | One IP sending more than 60 reports in 10 minutes (the rest are dropped) | medium |
+| 5 requests to `auditIngest` with a wrong key from one IP in 10 minutes | high |
 
 ### Watched parts of the database
 
