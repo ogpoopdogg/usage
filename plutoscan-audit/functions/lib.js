@@ -5,7 +5,9 @@
      events/{id}      { at, type, ok, email, uid, ip, ua, ... }
                         type: signup | signin | signin_failed | user_created | user_deleted |
                               account_changed | email_sent | purchase | purchase_removed |
-                              course_denied | checkout | visit
+                              course_denied | checkout | visit |
+                              stripe_paid | payment_failed | checkout_expired | refund |
+                              dispute | dispute_closed | fraud_warning
      changes/{id}     changes to users/{uid}: { at, area, path, action, by, fields, n, before, after }
      alerts/{id}      { at, level, title, detail, src }
      census/{uid}     the last look at each account (with its paid flag)
@@ -14,6 +16,8 @@
    Every events/changes/alerts entry is also sent to auditIngest in the E&C project, so it shows
    in the Security tab of the usage page. The copy here is the backup. */
 'use strict';
+
+const crypto = require('crypto');
 
 const TEXT_MAX = 300;
 const VALUE_MAX = 4000;
@@ -270,10 +274,78 @@ function censusAlertLevel(diff) {
   return null;
 }
 
+// ---------------------------------------------------------------- Stripe (auditPlutoStripe)
+
+const STRIPE_TOLERANCE = 5 * 60;   // seconds a signed event may be old (Stripe's own default)
+
+/**
+ * Checks a Stripe-Signature header the way Stripe documents it: HMAC-SHA256 of "<t>.<raw body>"
+ * with the endpoint's signing secret, compared with each v1 value, and t no more than 5 minutes old.
+ * https://docs.stripe.com/webhooks#verify-manually
+ */
+function stripeSignatureOk(header, rawBody, secret, nowSec) {
+  if (!header || !secret || typeof rawBody !== 'string') return false;
+  const parts = String(header).split(',').map((p) => p.split('='));
+  const t = Number((parts.find((p) => p[0] === 't') || [])[1]);
+  const sigs = parts.filter((p) => p[0] === 'v1').map((p) => p[1] || '');
+  if (!Number.isFinite(t) || !sigs.length || Math.abs(nowSec - t) > STRIPE_TOLERANCE) return false;
+  const expected = Buffer.from(crypto.createHmac('sha256', secret).update(t + '.' + rawBody, 'utf8').digest('hex'));
+  return sigs.some((s) => { const b = Buffer.from(s); return b.length === expected.length && crypto.timingSafeEqual(b, expected); });
+}
+
+function money(amount, currency) {
+  if (!Number.isFinite(amount)) return null;
+  return (amount / 100).toFixed(2) + ' ' + String(currency || '').toUpperCase();
+}
+
+/**
+ * The log entry and alert for a Stripe event, or null for events not watched. Card numbers never
+ * reach here; only the card brand, the country and Stripe's decline reason are kept.
+ */
+function stripeEntry(ev, at) {
+  const o = (ev && ev.data && ev.data.object) || {};
+  const base = { at, ok: true, stripeEvent: clip(ev.id, 80), livemode: !!ev.livemode, uid: clip(o.client_reference_id || (o.metadata && (o.metadata.uid || o.metadata.firebaseUid)) || null, 128) };
+  const err = o.last_payment_error || {};
+  const pm = err.payment_method || {};
+  const card = pm.card || {};
+  switch (ev && ev.type) {
+    case 'checkout.session.completed':
+      return { entry: Object.assign(base, { type: 'stripe_paid', email: clip(normEmail(o.customer_details && o.customer_details.email) || null, 200),
+        amount: money(o.amount_total, o.currency), reason: clip(o.payment_status, 40) }) };
+    case 'checkout.session.expired':
+      return { entry: Object.assign(base, { type: 'checkout_expired', ok: false, email: clip(normEmail(o.customer_details && o.customer_details.email) || null, 200),
+        amount: money(o.amount_total, o.currency), reason: 'checkout left unfinished' }) };
+    case 'checkout.session.async_payment_failed':
+      return { entry: Object.assign(base, { type: 'payment_failed', ok: false, email: clip(normEmail(o.customer_details && o.customer_details.email) || null, 200),
+        amount: money(o.amount_total, o.currency), reason: 'delayed payment failed' }) };
+    case 'payment_intent.payment_failed': {
+      const email = normEmail(o.receipt_email || (pm.billing_details && pm.billing_details.email)) || null;
+      return { entry: Object.assign(base, { type: 'payment_failed', ok: false, email: clip(email, 200), amount: money(o.amount, o.currency),
+        code: clip(err.decline_code || err.code, 80), reason: clip(err.message, 200), method: clip([card.brand, card.country].filter(Boolean).join(' ') || pm.type || null, 40) }) };
+    }
+    case 'charge.refunded':
+      return { entry: Object.assign(base, { type: 'refund', email: clip(normEmail(o.billing_details && o.billing_details.email) || normEmail(o.receipt_email) || null, 200),
+        amount: money(o.amount_refunded, o.currency) }),
+        alert: { level: 'medium', title: 'Refund', detail: 'A payment was refunded (' + (money(o.amount_refunded, o.currency) || 'amount unknown') + '). Paid access is not removed automatically; check the account.' } };
+    case 'charge.dispute.created':
+      return { entry: Object.assign(base, { type: 'dispute', ok: false, amount: money(o.amount, o.currency), reason: clip(o.reason, 60) }),
+        alert: { level: 'high', title: 'Chargeback opened', detail: 'A customer disputed a payment of ' + (money(o.amount, o.currency) || 'unknown amount') + ' (reason: ' + (o.reason || 'not given') + '). Respond in the Stripe dashboard before the deadline.' } };
+    case 'charge.dispute.closed':
+      return { entry: Object.assign(base, { type: 'dispute_closed', ok: o.status === 'won', amount: money(o.amount, o.currency), reason: clip(o.status, 40) }),
+        alert: { level: o.status === 'won' ? 'low' : 'medium', title: 'Chargeback ' + (o.status || 'closed'), detail: 'A dispute of ' + (money(o.amount, o.currency) || 'unknown amount') + ' was closed: ' + (o.status || 'unknown') + '.' } };
+    case 'radar.early_fraud_warning.created':
+      return { entry: Object.assign(base, { type: 'fraud_warning', ok: false, reason: clip(o.fraud_type, 60) }),
+        alert: { level: 'high', title: 'Stripe fraud warning', detail: 'The card issuer reported a payment as likely fraud (' + (o.fraud_type || 'type not given') + '). Consider refunding it before it becomes a chargeback.' } };
+    default:
+      return null;
+  }
+}
+
 module.exports = {
   REPORT_MAX, CLIENT_FIELDS,
   clip, normEmail, safeKey, dayKey, bucket, requestIp, pushIdAt,
   parseReport, reportEntry, authEventEntry,
   diffFields, topFields, userChange,
-  censusOf, censusDiff, censusChanged, censusAlertLevel
+  censusOf, censusDiff, censusChanged, censusAlertLevel,
+  stripeSignatureOk, stripeEntry
 };

@@ -25,7 +25,14 @@
         purchase_removed: { label: 'Paid access removed',    tone: 'warn' },
         course_denied:    { label: 'Turned away from course', tone: 'bad' },
         checkout:         { label: 'Checkout',               tone: 'info' },
-        visit:            { label: 'Visit',                  tone: 'muted' }
+        visit:            { label: 'Visit',                  tone: 'muted' },
+        stripe_paid:      { label: 'Stripe payment',         tone: 'ok' },
+        payment_failed:   { label: 'Payment failed',         tone: 'bad' },
+        checkout_expired: { label: 'Checkout abandoned',     tone: 'warn' },
+        refund:           { label: 'Refund',                 tone: 'warn' },
+        dispute:          { label: 'Chargeback',             tone: 'bad' },
+        dispute_closed:   { label: 'Chargeback closed',      tone: 'info' },
+        fraud_warning:    { label: 'Fraud warning',          tone: 'bad' }
     };
 
     let hours = 24;
@@ -307,6 +314,8 @@
             if (e.changes) bits.push(e.changes.map(c => c.label + ': ' + short(c.b) + ' → ' + short(c.a)).join('; '));
             if (e.type === 'signin_refused') bits.push(e.verified ? 'token checked' : 'not verified' + (e.tokenError ? ' (' + e.tokenError + ')' : ''));
             if (e.step) bits.push('step: ' + e.step);
+            if (e.amount) bits.push(e.amount);
+            if (e.stripeEvent && e.livemode === false) bits.push('Stripe test mode');
             if (e.type === 'visit' || e.type === 'course_denied') bits.push(e.page || '');
             if (e.referrer) bits.push('from: ' + e.referrer);
             if (e.type === 'course_denied' || (e.type === 'checkout' && e.step === 'started')) bits.push(e.verified ? 'token checked' : 'not signed in or not verified');

@@ -23,6 +23,11 @@
    - auditPlutoReport: failed sign-ins, the course page turning someone away (not signed in or not
      paid), the checkout steps, and page visits.
 
+   Stripe
+   - auditPlutoStripe: a second Stripe webhook (your stripeWebhook is untouched) for what happens
+     inside Stripe: failed card payments, checkouts left unfinished, refunds, chargebacks and
+     fraud warnings. Each event is checked with its own signing secret.
+
    Upkeep
    - auditPlutoPrune (daily): drops this project's copies after 90 days.
 
@@ -50,6 +55,8 @@ const LOG = 'security_log';
 const INGEST_URL = process.env.AUDIT_INGEST_URL || 'https://us-central1-eandccourier-36fcc.cloudfunctions.net/auditIngest';
 // The same random value is stored as a secret in eandccourier-36fcc (see the README).
 const KEY = defineSecret('PLUTOSCAN_AUDIT_KEY');
+// The signing secret of the auditPlutoStripe endpoint in the Stripe dashboard (whsec_...).
+const STRIPE_SECRET = defineSecret('STRIPE_AUDIT_WEBHOOK_SECRET');
 const SITE = ['https://plutoscan.com', 'https://www.plutoscan.com', 'https://pluto-scan.github.io'];
 
 const MIN = 60 * 1000;
@@ -321,6 +328,46 @@ exports.auditPlutoReport = onRequest(
   }
 );
 
+// ---------------------------------------------------------------- Stripe
+
+exports.auditPlutoStripe = onRequest(
+  { region: REGION, memory: MEMORY, invoker: 'public', maxInstances: 5, concurrency: 20, secrets: [KEY, STRIPE_SECRET] },
+  async (req, res) => {
+    if (req.method !== 'POST') { res.status(405).end(); return; }
+    const at = Date.now();
+    const raw = Buffer.isBuffer(req.rawBody) ? req.rawBody.toString('utf8') : '';
+    if (!L.stripeSignatureOk(req.get('stripe-signature'), raw, STRIPE_SECRET.value(), Math.floor(at / 1000))) {
+      const ip = L.requestIp(req);
+      const n = await count('stripe_refused/' + L.bucket(at, REPORT_WINDOW) + '/' + L.safeKey(ip)).catch(() => 0);
+      if (n === 5) {
+        await raise({ level: 'high', title: 'Forged Stripe events', detail: 'IP ' + ip + ' sent ' + n + ' requests to the Stripe webhook without a valid Stripe signature in 10 minutes.' }, 'stripe', at).catch(() => {});
+      }
+      res.status(400).end();
+      return;
+    }
+    try {
+      const ev = JSON.parse(raw);
+      // Stripe retries until it gets a 2xx; remember each event so a retry isn't logged twice.
+      const seen = await log('stripe_seen/' + (String(ev.id || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 100) || 'none')).transaction((v) => (v ? undefined : at));
+      if (!seen.committed) { res.status(200).end(); return; }
+      const got = L.stripeEntry(ev, at);
+      if (got) {
+        if (got.entry.uid && !got.entry.email) {
+          got.entry.email = await admin.auth().getUser(got.entry.uid).then((u) => L.normEmail(u.email) || null, () => null);
+        }
+        const jobs = [record('events', got.entry)];
+        if (got.alert) jobs.push(raise(Object.assign(got.alert, { detail: got.alert.detail + (got.entry.email ? ' Customer: ' + got.entry.email + '.' : '') + (got.entry.livemode ? '' : ' (Stripe test mode)') }), 'stripe', at));
+        await Promise.all(jobs);
+      }
+      await tally('auditPlutoStripe', at);
+      res.status(200).end();
+    } catch (e) {
+      logger.error('Stripe event not logged', e);
+      res.status(500).end();
+    }
+  }
+);
+
 // ---------------------------------------------------------------- upkeep
 
 async function dropOlder(path, age, now) {
@@ -341,8 +388,12 @@ exports.auditPlutoPrune = onSchedule({ schedule: 'every day 03:45', timeZone: 'A
   const now = Date.now();
   const removed = {};
   for (const path of ['events', 'changes', 'alerts', 'unsent']) removed[path] = await dropOlder(path, KEEP, now);
+  // Stripe retries an event for up to 3 days; a week of remembered ids is plenty.
+  const seen = (await log('stripe_seen').once('value')).val() || {};
+  const oldSeen = Object.keys(seen).filter((k) => seen[k] < now - 7 * DAY);
+  if (oldSeen.length) await log('stripe_seen').update(Object.fromEntries(oldSeen.map((k) => [k, null])));
   const counters = (await log('counters').once('value')).val() || {};
-  const windows = { failed_email: FAIL_WINDOW, failed_ip: FAIL_WINDOW, denied_ip: FAIL_WINDOW, reports: REPORT_WINDOW };
+  const windows = { failed_email: FAIL_WINDOW, failed_ip: FAIL_WINDOW, denied_ip: FAIL_WINDOW, reports: REPORT_WINDOW, stripe_refused: REPORT_WINDOW };
   const updates = {};
   for (const [kind, buckets] of Object.entries(counters)) {
     const ms = windows[kind];
