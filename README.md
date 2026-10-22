@@ -17,6 +17,7 @@ PlutoScan (its own Firebase project, `plutoscan`) has its own audit functions in
 | Sign-in activity | Every sign-in (with IP address, browser, sign-in method), failed sign-ins, accounts an app turned away, new and deleted accounts, account changes, reset emails, SMS codes | `auditBeforeSignIn`, `auditSignInReport`, `auditUserCreated`, `auditUserDeleted`, `auditUserCensus`, `auditBeforeEmail`, `auditBeforeSms`, and the time clock's `timeclockBeforeUserCreated` (sign-ups) |
 | Database changes | Who changed what, when, the fields that changed, and the full record before and after | One watcher per area (list below) |
 | Accounts | Every Firebase sign-in account, its sign-in methods, last sign-in and the devices it has used | `auditUserCensus` (every 30 minutes) and `auditBeforeSignIn` |
+| PlutoScan | Its sign-ups, sign-ins, failed sign-ins, purchases, people turned away from the course, checkout steps and visits (in the activity list, app `plutoscan`; visits only under their own filter), its account data changes, and its accounts with paid or not (Accounts, pick PlutoScan) | `plutoscan-audit/` through `auditIngest` |
 | Top lists | Failed sign-ins by email and by IP, and who changes the database most | Worked out on the page |
 
 ### Alerts

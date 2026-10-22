@@ -333,7 +333,7 @@
             <p class="sub">Every sign-in, failed or refused sign-in, new or deleted account, account change, reset email and SMS code. Newest first.</p>
             <div class="filters">
                 <select id="sec-ev-type" aria-label="Kind of activity">
-                    <option value="all">Everything</option>
+                    <option value="all">Everything but visits</option>
                     <option value="problems">Only problems</option>
                     <option value="signin">Signed in</option>
                     <option value="signin_failed">Failed sign-ins</option>
@@ -344,6 +344,11 @@
                     <option value="account_changed">Accounts changed</option>
                     <option value="email_sent">Emails sent</option>
                     <option value="sms_sent">SMS codes sent</option>
+                    <option value="purchase">PlutoScan purchases</option>
+                    <option value="purchase_removed">PlutoScan paid access removed</option>
+                    <option value="course_denied">Turned away from the PlutoScan course</option>
+                    <option value="checkout">PlutoScan checkout steps</option>
+                    <option value="visit">PlutoScan visits</option>
                 </select>
                 <select id="sec-ev-app" aria-label="App"><option value="all">All apps</option></select>
                 <input type="search" id="sec-ev-q" placeholder="Search email, IP, phone, uid, error…" aria-label="Search sign-in activity">
@@ -375,13 +380,16 @@
 
         <section>
             <h2>Accounts</h2>
-            <p class="sub">Every sign-in account in Firebase, checked every 30 minutes, with the devices each has signed in from.</p>
+            <p class="sub">Every sign-in account in Firebase, checked every 30 minutes, with the devices each has signed in from. Pick PlutoScan to see its accounts and who has paid.</p>
             <div class="filters">
                 <select id="sec-acc-kind" aria-label="Kind of account">
-                    <option value="all">All accounts</option>
+                    <option value="all">All E&amp;C accounts</option>
                     <option value="staff">Staff (@ec.com)</option>
                     <option value="customers">Everyone else</option>
                     <option value="disabled">Disabled</option>
+                    <option value="pluto">PlutoScan accounts</option>
+                    <option value="pluto_paid">PlutoScan, paid</option>
+                    <option value="pluto_unpaid">PlutoScan, not paid</option>
                 </select>
                 <input type="search" id="sec-acc-q" placeholder="Search email, phone, uid…" aria-label="Search accounts">
             </div>
