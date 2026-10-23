@@ -120,6 +120,16 @@ async function countFailure(entry) {
   await Promise.all(jobs);
 }
 
+/** Adds the app to the sign-in row the token's sign-in made (see L.signInRowFor). */
+async function nameSignInApp(token, report, at) {
+  const authTime = (token.auth_time || 0) * 1000;
+  if (!authTime || at - authTime > 15 * MIN) return;  // an old token: not a fresh sign-in
+  const from = L.pushIdAt(Math.max(0, authTime - L.SIGNIN_MATCH));
+  const snap = await log('events').orderByKey().startAt(from).endAt(L.pushIdAt(authTime + L.SIGNIN_MATCH) + '\uf8ff').once('value');
+  const key = L.signInRowFor(snap.val(), token.uid, authTime);
+  if (key) await log('events/' + key).update({ app: report.app, page: report.page });
+}
+
 exports.auditSignInReport = onRequest(
   { region: REGION, memory: MEMORY, invoker: 'public', cors: true, maxInstances: 5, concurrency: 40 },
   async (req, res) => {
@@ -142,6 +152,13 @@ exports.auditSignInReport = onRequest(
       let tokenError = null;
       if (report.idToken) {
         try { token = await admin.auth().verifyIdToken(report.idToken); } catch (e) { tokenError = e.code || 'invalid'; }
+      }
+      if (report.kind === 'signedin') {
+        // Only a real token can name an app; the row stays as it was otherwise.
+        if (token) await nameSignInApp(token, report, at);
+        await tally('auditSignInReport', at);
+        res.status(204).end();
+        return;
       }
       const entry = L.reportEntry(report, { at, ip, ua: req.get('user-agent'), origin: req.get('origin'), token, tokenError });
       await log('events').push(entry);

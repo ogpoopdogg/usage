@@ -196,3 +196,19 @@ test('entries forwarded by another project are checked and labelled here', () =>
   const ce = L.ingestEntry(send({ kind: 'census', set: { u1: { email: 'a@b.com', paid: true }, 'bad/uid': { email: 'x' }, u2: null } }), 'plutoscan', AT);
   assert.deepEqual(ce.set, { u1: { email: 'a@b.com', paid: true }, u2: null });
 });
+
+test('a signed-in report finds the account\'s own sign-in row nearest the sign-in time', () => {
+  assert.equal(L.parseReport(JSON.stringify({ kind: 'signedin', app: 'Dispatch', idToken: 'tok' })).app, 'dispatch');
+  const events = {
+    a: { type: 'signin', uid: 'u1', at: AT - 60000 },
+    b: { type: 'signin', uid: 'u1', at: AT - 5000 },
+    c: { type: 'signin', uid: 'u1', at: AT - 1000, app: 'garage' },
+    d: { type: 'signin', uid: 'u2', at: AT },
+    e: { type: 'signin_failed', uid: 'u1', at: AT },
+    f: { type: 'signin', uid: 'u1', at: AT - L.SIGNIN_MATCH - 1 }
+  };
+  assert.equal(L.signInRowFor(events, 'u1', AT), 'b');
+  assert.equal(L.signInRowFor(events, 'u1', AT - L.SIGNIN_MATCH - 60000), 'f');
+  assert.equal(L.signInRowFor(events, 'u3', AT), null);
+  assert.equal(L.signInRowFor(null, 'u1', AT), null);
+});
