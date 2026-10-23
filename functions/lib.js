@@ -55,9 +55,10 @@ function pushIdAt(t) {
 // ---------------------------------------------------------------- reports from the apps
 
 const APPS = /^[a-z0-9_-]{1,30}$/;
-const KINDS = new Set(['failed', 'refused']);
+const KINDS = new Set(['failed', 'refused', 'signedin']);
 
-/** A failed or refused sign-in report sent by an app (see reportFailedSignIn in each app), or null. */
+/** A failed or refused sign-in report sent by an app (see reportFailedSignIn in each app), or a
+ * 'signedin' report naming the app a sign-in came from, or null. */
 function parseReport(text) {
   if (typeof text !== 'string' || !text || text.length > REPORT_MAX) return null;
   let r;
@@ -105,6 +106,22 @@ function reportEntry(r, { at, ip, ua, origin, token, tokenError }) {
     e.tokenError = clip(tokenError || 'invalid', 80);
   }
   return e;
+}
+
+const SIGNIN_MATCH = 3 * 60 * 1000;  // how far a sign-in row may be from the token's sign-in time
+
+/** The key of the sign-in row a 'signedin' report belongs to: the account's own row with no app yet,
+ * closest to the token's sign-in time (authTime, ms). Firebase can't tell the sign-in function which
+ * app is signing in, so the app says so afterwards. events: { key: entry }. */
+function signInRowFor(events, uid, authTime) {
+  let best = null;
+  let bestGap = Infinity;
+  for (const [key, e] of Object.entries(events || {})) {
+    if (!e || e.type !== 'signin' || e.uid !== uid || e.app) continue;
+    const gap = Math.abs((e.at || 0) - authTime);
+    if (gap <= SIGNIN_MATCH && gap < bestGap) { best = key; bestGap = gap; }
+  }
+  return best;
 }
 
 // ---------------------------------------------------------------- sign-ins (blocking functions)
@@ -381,7 +398,7 @@ module.exports = {
   ADMIN_EMAILS, WATCHES, REPORT_MAX, INGEST_APPS,
   ingestEntry,
   clip, normEmail, safeKey, hash, dayKey, bucket, requestIp, pushIdAt,
-  parseReport, reportEntry, authEventEntry, deviceName, deviceKey,
+  parseReport, reportEntry, signInRowFor, SIGNIN_MATCH, authEventEntry, deviceName, deviceKey,
   actionOf, diffFields, countLeaves, keepValue, changeEntry, changeAlerts,
   censusOf, censusDiff, censusAlertLevel
 };

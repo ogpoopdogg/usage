@@ -48,6 +48,7 @@ Left out on purpose, because they change many times a minute and would cost more
 ### Limits
 
 - **Failed sign-ins are reported by the apps.** Firebase runs no server code when a password is wrong, so each app sends a report (see `ecReportFailedSignIn` / `reportFailedSignIn` in each app). Someone calling Firebase directly with a script skips that. Turn on Identity Platform's own logging (step 4 below) so Google Cloud keeps a record either way.
+- **Which app a sign-in came from** is told by the app. Firebase doesn't tell the sign-in function which app is signing in, so after a sign-in that worked each app sends a short "signed in" report with its sign-in token, and `auditSignInReport` fills in the App column on that sign-in's row. Sign-ins from before this, from an app that hasn't been updated, or made with a script show no app.
 - **Who made a database change** comes from Firebase (`authType` and `authId` on the database event). The emulator does not fill these in, so they could not be tested here; check them after deploying (step 6). If changes show "Unknown" under Changed by, the non-staff and no-sign-in alerts can't fire.
 - **Blocking functions don't see accounts made in the Firebase console or with admin tools.** `auditUserCreated` and the 30-minute census catch those.
 - Entries are kept 90 days and alerts a year (`auditPrune`, daily at 3:30 a.m. Central).
