@@ -174,7 +174,7 @@ exports.auditPlutoUserDeleted = functionsV1.region(REGION).runWith({ memory: '25
     record('events', Object.assign({ at, type: 'user_deleted', ok: true }, s)),
     log('census/' + u.uid).remove(),
     send({ kind: 'census', set: { [u.uid]: null } }),
-    raise({ level: 'low', title: 'Account deleted', detail: (s.email || s.uid) + ' was deleted.' }, 'accounts', at),
+    raise({ type: 'account_deleted', level: 'low', title: 'Account deleted', detail: (s.email || s.uid) + ' was deleted.' }, 'accounts', at),
     tally('auditPlutoUserDeleted', at)
   ]);
 });
@@ -217,7 +217,7 @@ exports.auditPlutoCensus = onSchedule({ schedule: 'every 30 minutes', region: RE
       jobs.push(record('events', { at, type: 'account_changed', ok: true, uid: u.uid, email: now.email || was.email, changes: diff }));
       const level = L.censusAlertLevel(diff);
       if (level) {
-        jobs.push(raise({ level, title: 'Account changed: ' + (now.email || was.email || u.uid),
+        jobs.push(raise({ type: 'account_changed', level, title: 'Account changed: ' + (now.email || was.email || u.uid),
           detail: diff.map((d) => d.label + ': ' + (d.b == null ? 'none' : d.b) + ' → ' + (d.a == null ? 'none' : d.a)).join('; ') }, 'census', at));
       }
     });
@@ -272,15 +272,15 @@ async function countReport(entry) {
   const b = L.bucket(entry.at, FAIL_WINDOW);
   const jobs = [];
   if (entry.type === 'signin_failed' && entry.email) {
-    jobs.push(count('failed_email/' + b + '/' + L.safeKey(entry.email)).then((n) => n === FAIL_ALERT && raise({ level: 'medium',
+    jobs.push(count('failed_email/' + b + '/' + L.safeKey(entry.email)).then((n) => n === FAIL_ALERT && raise({ type: 'failed_signins', level: 'medium',
       title: 'Repeated failed sign-ins', detail: n + ' failed sign-ins for ' + entry.email + ' in 15 minutes (latest from ' + (entry.ip || 'unknown IP') + ').' }, 'signin', entry.at)));
   }
   if (entry.type === 'signin_failed' && entry.ip) {
-    jobs.push(count('failed_ip/' + b + '/' + L.safeKey(entry.ip)).then((n) => (n === FAIL_ALERT || n === FAIL_ALERT_IP) && raise({ level: n >= FAIL_ALERT_IP ? 'high' : 'medium',
+    jobs.push(count('failed_ip/' + b + '/' + L.safeKey(entry.ip)).then((n) => (n === FAIL_ALERT || n === FAIL_ALERT_IP) && raise({ type: 'failed_signins', level: n >= FAIL_ALERT_IP ? 'high' : 'medium',
       title: 'Many failed sign-ins from one place', detail: n + ' failed sign-ins from IP ' + entry.ip + ' in 15 minutes (latest for ' + (entry.email || 'no email') + ').' }, 'signin', entry.at)));
   }
   if (entry.type === 'course_denied' && entry.ip) {
-    jobs.push(count('denied_ip/' + b + '/' + L.safeKey(entry.ip)).then((n) => n === DENIED_ALERT && raise({ level: 'medium',
+    jobs.push(count('denied_ip/' + b + '/' + L.safeKey(entry.ip)).then((n) => n === DENIED_ALERT && raise({ type: 'course_denied', level: 'medium',
       title: 'Repeated attempts to open the course', detail: 'IP ' + entry.ip + ' was turned away from the course ' + n + ' times in 15 minutes (latest: ' + (entry.reason || 'no reason') + ', ' + (entry.email || 'not signed in') + ').' }, 'course', entry.at)));
   }
   await Promise.all(jobs);
@@ -299,7 +299,7 @@ exports.auditPlutoReport = onRequest(
       const n = await count('reports/' + L.bucket(at, REPORT_WINDOW) + '/' + L.safeKey(ip));
       if (n > REPORT_LIMIT) {
         if (n === REPORT_LIMIT + 1) {
-          await raise({ level: 'medium', title: 'Too many reports from one place', detail: 'IP ' + ip + ' sent more than ' + REPORT_LIMIT + ' reports in 10 minutes; the rest are not logged.' }, 'report', at);
+          await raise({ type: 'report_flood', level: 'medium', title: 'Too many reports from one place', detail: 'IP ' + ip + ' sent more than ' + REPORT_LIMIT + ' reports in 10 minutes; the rest are not logged.' }, 'report', at);
         }
         res.status(204).end();
         return;

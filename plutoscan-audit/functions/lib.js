@@ -7,7 +7,10 @@
                               account_changed | email_sent | purchase | purchase_removed |
                               course_denied | checkout | visit
      changes/{id}     changes to users/{uid}: { at, area, path, action, by, fields, n, before, after }
-     alerts/{id}      { at, level, title, detail, src }
+     alerts/{id}      { at, type, level, title, detail, src }
+                        type: failed_signins | course_denied | purchase | paid_removed | tampering |
+                              account_deleted | account_changed | report_flood (auditIngest adds
+                              the pluto_ prefix; see ../../functions/alert-types.js)
      census/{uid}     the last look at each account (with its paid flag)
      counters/...     short-lived counts used to spot bursts
      unsent/{id}      entries the E&C log didn't take; sent again by auditPlutoResend
@@ -212,22 +215,22 @@ function userChange({ uid, before, after, who, at }) {
     const byUser = who.type === 'app_user' || who.type === 'unauthenticated';
     events.push({ at, type: 'purchase', ok: !byUser, uid, by: entry.by.type });
     alerts.push(byUser
-      ? { level: 'high', title: 'Paid flag set by a user', detail: writer + ' marked ' + uid + ' as paid without going through Stripe. The database rules should never allow this.' }
-      : { level: 'low', title: 'New purchase', detail: 'Account ' + uid + ' was marked as paid' + (who.type === 'admin' ? ' (by the Stripe webhook or the console).' : ' (Firebase did not say who wrote it).') });
+      ? { type: 'tampering', level: 'high', title: 'Paid flag set by a user', detail: writer + ' marked ' + uid + ' as paid without going through Stripe. The database rules should never allow this.' }
+      : { type: 'purchase', level: 'low', title: 'New purchase', detail: 'Account ' + uid + ' was marked as paid' + (who.type === 'admin' ? ' (by the Stripe webhook or the console).' : ' (Firebase did not say who wrote it).') });
   } else if (paidBefore && !paidAfter) {
     events.push({ at, type: 'purchase_removed', ok: true, uid, by: entry.by.type });
-    alerts.push({ level: 'medium', title: 'Paid access removed', detail: writer + ' removed paid access from ' + uid + '.' });
+    alerts.push({ type: 'paid_removed', level: 'medium', title: 'Paid access removed', detail: writer + ' removed paid access from ' + uid + '.' });
   }
   if (who.type === 'unauthenticated') {
-    alerts.push({ level: 'high', title: 'Change with no sign-in', detail: 'users/' + uid + ' was ' + action + ' by someone not signed in. The database rules should never allow this.' });
+    alerts.push({ type: 'tampering', level: 'high', title: 'Change with no sign-in', detail: 'users/' + uid + ' was ' + action + ' by someone not signed in. The database rules should never allow this.' });
   } else if (who.type === 'app_user' && who.uid && who.uid !== uid) {
-    alerts.push({ level: 'high', title: "Changed someone else's account", detail: writer + ' ' + action + ' users/' + uid + ' (' + top.join(', ') + ').' });
+    alerts.push({ type: 'tampering', level: 'high', title: "Changed someone else's account", detail: writer + ' ' + action + ' users/' + uid + ' (' + top.join(', ') + ').' });
   } else if (who.type === 'app_user') {
     const odd = top.filter((k) => !CLIENT_FIELDS.has(k) && !SERVER_FIELDS.has(k));
-    if (odd.length) alerts.push({ level: 'medium', title: 'Unexpected data on an account', detail: name + ' wrote ' + odd.join(', ') + ' under users/' + uid + '; the site only writes progress and review.' });
+    if (odd.length) alerts.push({ type: 'tampering', level: 'medium', title: 'Unexpected data on an account', detail: name + ' wrote ' + odd.join(', ') + ' under users/' + uid + '; the site only writes progress and review.' });
   }
   if (action === 'deleted' && who.type !== 'admin') {
-    alerts.push({ level: 'high', title: 'Account data deleted', detail: writer + ' deleted users/' + uid + ' (' + entry.n + ' values).' });
+    alerts.push({ type: 'account_deleted', level: 'high', title: 'Account data deleted', detail: writer + ' deleted users/' + uid + ' (' + entry.n + ' values).' });
   }
   return { entry, events, alerts, progressOnly };
 }

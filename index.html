@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>E&amp;C Usage and Security</title>
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#0A0A09">
@@ -11,159 +11,264 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Rajdhani:wght@600;700&display=swap" rel="stylesheet">
+    <!-- capacitor runtime -->
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
+    <script src="functions/alert-types.js"></script>
     <style>
         :root {
             --crown: #E8E400;
             --bg: #0A0A09;
             --card: #141412;
+            --card2: #1C1C19;
             --line: #2A2A26;
             --text: #F4F4EE;
             --muted: #A3A396;
+            --faint: #6E6E64;
+            --ok: #3DDC97;
             --err: #FF6B5B;
+            --warn: #FF8A3D;
+            --info: #4FA3FF;
+            --radius: 12px;
             --font-display: 'Rajdhani', 'Inter', system-ui, sans-serif;
+            color-scheme: dark;
         }
         * { box-sizing: border-box; }
+        html { -webkit-text-size-adjust: 100%; }
         body {
             margin: 0; background: var(--bg); color: var(--text);
             font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
-            font-size: 15px; line-height: 1.5;
+            font-size: 15px; line-height: 1.45;
+            overflow-wrap: anywhere;
         }
         button, input, select { font: inherit; }
+        button { -webkit-tap-highlight-color: transparent; }
         :focus-visible { outline: 2px solid var(--crown); outline-offset: 2px; }
+        [hidden] { display: none !important; }
 
         /* ---------- Login ---------- */
         #login {
-            min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px;
+            min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px;
         }
-        .login-box { width: 100%; max-width: 340px; }
-        .login-box h1 { font-family: var(--font-display); font-size: 34px; line-height: 1.1; margin: 0 0 4px; }
+        .login-box { width: 100%; max-width: 360px; }
+        .login-box img { width: 64px; height: 64px; border-radius: 14px; display: block; margin-bottom: 14px; }
+        .login-box h1 { font-family: var(--font-display); font-size: 32px; line-height: 1.1; margin: 0 0 4px; }
         .login-box p { color: var(--muted); margin: 0 0 20px; }
-        .login-box label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+        .login-box label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
         .login-box input {
-            width: 100%; padding: 11px 12px; background: var(--card); color: var(--text);
-            border: 1px solid var(--line); border-radius: 6px;
+            width: 100%; padding: 13px 14px; background: var(--card); color: var(--text);
+            border: 1px solid var(--line); border-radius: 10px; font-size: 16px;
         }
         .btn-primary {
-            margin-top: 18px; width: 100%; padding: 12px; border: 0; border-radius: 6px;
-            background: var(--crown); color: #000; font-weight: 700; cursor: pointer;
+            margin-top: 20px; width: 100%; padding: 14px; border: 0; border-radius: 10px;
+            background: var(--crown); color: #000; font-weight: 700; cursor: pointer; font-size: 16px;
         }
         .btn-primary:disabled { opacity: .6; cursor: default; }
         #login-msg { min-height: 1.5em; margin-top: 12px; color: var(--err); font-size: 14px; }
 
-        /* ---------- App ---------- */
-        #app { display: none; max-width: 1180px; margin: 0 auto; padding: 20px 20px 60px; }
-        header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 16px; border-bottom: 2px solid var(--crown); }
-        header h1 { font-family: var(--font-display); font-size: 28px; line-height: 1; margin: 0; }
-        header h1 span { color: var(--crown); }
+        /* ---------- App frame ---------- */
+        #app { display: none; }
+        .topbar {
+            position: sticky; top: 0; z-index: 20; background: rgba(10, 10, 9, .94);
+            -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+            padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 0;
+            border-bottom: 1px solid var(--line);
+        }
+        .topbar-in { max-width: 860px; margin: 0 auto; }
+        .brand-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+        .brand img { width: 32px; height: 32px; border-radius: 8px; flex: none; }
+        .brand h1 { font-family: var(--font-display); font-size: 22px; line-height: 1; margin: 0; white-space: nowrap; }
+        .brand h1 span { color: var(--crown); }
+        main { max-width: 860px; margin: 0 auto; padding: 14px 16px calc(48px + env(safe-area-inset-bottom, 0px)); }
+
         .btn-ghost {
             background: transparent; color: var(--text); border: 1px solid var(--line);
-            border-radius: 6px; padding: 8px 12px; cursor: pointer;
+            border-radius: 10px; padding: 9px 14px; cursor: pointer; min-height: 40px;
         }
         .btn-ghost:hover { border-color: var(--muted); }
-
-        .controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; padding: 16px 0; }
-        .ctl { display: flex; flex-direction: column; gap: 4px; }
-        .ctl > span { font-size: 12px; color: var(--muted); }
-        .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
-        .seg button {
-            background: transparent; color: var(--text); border: 0; padding: 8px 12px; cursor: pointer;
-            border-right: 1px solid var(--line);
+        .btn-ghost:disabled { opacity: .45; cursor: default; }
+        .btn-ghost.small { padding: 5px 10px; font-size: 13px; min-height: 32px; border-radius: 8px; }
+        .btn-accent {
+            display: inline-flex; align-items: center; gap: 8px; background: var(--card2); color: var(--text);
+            border: 1px solid var(--crown); border-radius: 10px; padding: 9px 14px; cursor: pointer; min-height: 40px; font-weight: 600;
         }
-        .seg button:last-child { border-right: 0; }
-        .seg button[aria-pressed="true"] { background: var(--crown); color: #000; font-weight: 600; }
-        select, input[type="date"] {
-            background: var(--card); color: var(--text); border: 1px solid var(--line);
-            border-radius: 6px; padding: 7px 10px; color-scheme: dark;
-        }
-        #custom-dates { display: none; gap: 8px; align-items: center; }
-        #custom-dates.show { display: flex; }
-
-        .status { color: var(--muted); font-size: 14px; min-height: 1.5em; margin: 0 0 8px; }
-        .status.error { color: var(--err); }
-
-        .totals { display: flex; flex-wrap: wrap; gap: 8px 28px; padding: 12px 0 20px; border-bottom: 1px solid var(--line); }
-        .totals div { font-size: 14px; color: var(--muted); }
-        .totals strong { display: block; font-family: var(--font-display); font-size: 26px; line-height: 1.1; color: var(--text); }
-
-        section { padding: 26px 0 8px; }
-        section h2 { font-family: var(--font-display); font-size: 22px; margin: 0 0 2px; }
-        section .sub { color: var(--muted); font-size: 14px; margin: 0 0 14px; }
-        .chart-box { position: relative; width: 100%; }
-        .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 32px; }
-        @media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
-
-        .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; }
-        table { border-collapse: collapse; width: 100%; font-size: 14px; }
-        th, td { padding: 8px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
-        th { color: var(--muted); font-weight: 600; font-size: 13px; background: var(--card); position: sticky; top: 0; }
-        th:first-child, td:first-child { text-align: left; position: sticky; left: 0; background: var(--card); }
-        td:first-child { font-weight: 600; }
-        td.total, th.total { font-weight: 700; color: var(--crown); }
-        td .e { display: block; font-size: 11px; color: var(--err); }
-        tr:last-child td { border-bottom: 0; }
-        tfoot td { font-weight: 700; background: var(--card); }
-        .empty { padding: 28px 0; color: var(--muted); }
-        .note { color: var(--muted); font-size: 13px; margin-top: 28px; max-width: 75ch; }
+        .btn-accent svg { width: 18px; height: 18px; fill: var(--crown); flex: none; }
+        .btn-accent small { color: var(--muted); font-weight: 400; }
 
         /* ---------- Tabs ---------- */
-        .tabs { display: flex; gap: 4px; padding-top: 14px; border-bottom: 1px solid var(--line); }
+        .tabs { display: grid; grid-template-columns: 1fr 1fr; margin-top: 10px; }
         .tabs button {
             background: transparent; color: var(--muted); border: 0; border-bottom: 3px solid transparent;
-            padding: 8px 14px; cursor: pointer; font-family: var(--font-display); font-size: 19px; font-weight: 700;
+            padding: 10px 6px 9px; cursor: pointer; font-family: var(--font-display); font-size: 18px; font-weight: 700;
+            display: flex; align-items: center; justify-content: center; gap: 6px;
         }
         .tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--crown); }
-        .tabs .count { display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 6px; border-radius: 10px;
+        .tabs .count { display: inline-block; min-width: 20px; padding: 0 6px; border-radius: 10px;
             background: var(--err); color: #000; font-family: 'Inter', sans-serif; font-size: 12px; line-height: 20px; text-align: center; }
-        .tabs .count[hidden] { display: none; }
+
+        /* ---------- Controls ---------- */
+        .controls { display: grid; gap: 10px; margin-bottom: 12px; }
+        .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--card); }
+        .seg button {
+            background: transparent; color: var(--text); border: 0; padding: 10px 4px; cursor: pointer; min-height: 42px;
+            border-right: 1px solid var(--line); font-size: 14px; white-space: nowrap;
+        }
+        .seg button:last-child { border-right: 0; }
+        .seg button[aria-pressed="true"] { background: var(--crown); color: #000; font-weight: 700; }
+        .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .row-btns { display: flex; gap: 10px; flex-wrap: wrap; }
+        .row-btns .grow { flex: 1; justify-content: center; }
+        select, input[type="date"], input[type="search"] {
+            width: 100%; min-width: 0; background: var(--card); color: var(--text); border: 1px solid var(--line);
+            border-radius: 10px; padding: 9px 10px; min-height: 42px; font-size: 15px;
+        }
+        #custom-dates { grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: center; display: none; }
+        #custom-dates.show { display: grid; }
+        .status-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+        .status { color: var(--muted); font-size: 13px; min-height: 1.4em; margin: 0; }
+        .status.error { color: var(--err); }
+
+        /* ---------- Cards ---------- */
+        .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin: 0 0 12px; min-width: 0; }
+        .card h2 { font-family: var(--font-display); font-size: 21px; line-height: 1.15; margin: 0 0 2px; }
+        .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+        .sub { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+        .card-head .sub { margin: 0; }
+        .empty { padding: 14px 0 4px; color: var(--muted); font-size: 14px; }
+        .note { color: var(--faint); font-size: 12px; margin: 18px 2px 0; }
+        .grid-md { display: grid; gap: 0 12px; }
+        @media (min-width: 760px) { .grid-md { grid-template-columns: 1fr 1fr; } }
+
+        /* Stat tiles */
+        .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+        @media (min-width: 600px) { .tiles { grid-template-columns: repeat(3, 1fr); } }
+        .tile { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; min-width: 0; }
+        .tile strong { display: block; font-size: 26px; font-weight: 600; line-height: 1.15; letter-spacing: -.01em; }
+        .tile strong.word { font-size: 18px; line-height: 1.3; padding: 4px 0 3px; }
+        .tile span { display: block; color: var(--muted); font-size: 13px; }
+        .tile.bad { border-color: rgba(255, 107, 91, .55); } .tile.bad strong { color: var(--err); }
+        .tile.warn strong { color: var(--warn); }
+
+        /* Charts */
+        .chart-box { position: relative; width: 100%; height: 200px; }
+        .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 10px 0 0; padding: 0; list-style: none; font-size: 13px; color: var(--muted); }
+        .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+        /* Ranked lists (instead of wide tables) */
+        .rank { list-style: none; margin: 0; padding: 0; }
+        .rank li { padding: 9px 0; border-top: 1px solid var(--line); }
+        .rank li:first-child { border-top: 0; padding-top: 2px; }
+        .rank-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+        .rank-name { font-weight: 600; min-width: 0; }
+        .rank-val { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+        .bar { height: 6px; background: var(--card2); border-radius: 3px; margin-top: 6px; overflow: hidden; }
+        .bar i { display: block; height: 100%; background: var(--crown); border-radius: 0 3px 3px 0; min-width: 2px; }
+        .bar.bad i { background: var(--err); }
+        .rank-sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
+        .rank-sub .e { color: var(--err); }
 
         /* ---------- Security ---------- */
-        .totals div.bad strong { color: var(--err); }
-        .totals div.warn strong { color: #FF8A3D; }
-        .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; border: 1px solid currentColor; white-space: nowrap; }
-        .pill.ok { color: #3DDC97; } .pill.bad { color: var(--err); } .pill.warn { color: #FF8A3D; }
-        .pill.info { color: #4FA3FF; } .pill.muted { color: var(--muted); }
-        .tag { font-size: 11px; color: var(--crown); border: 1px solid var(--crown); border-radius: 4px; padding: 0 4px; }
-        .alert { display: flex; gap: 12px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 8px; background: var(--card); }
+        .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; border: 1px solid currentColor; white-space: nowrap; line-height: 18px; }
+        .pill.ok { color: var(--ok); } .pill.bad { color: var(--err); } .pill.warn { color: var(--warn); }
+        .pill.info { color: var(--info); } .pill.muted { color: var(--muted); }
+        .tag { font-size: 11px; color: var(--crown); border: 1px solid var(--crown); border-radius: 4px; padding: 0 4px; white-space: nowrap; }
+        .alert { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; background: var(--card2); }
         .alert.seen { opacity: .55; }
         .alert-body { flex: 1; min-width: 0; }
         .alert-body strong, .alert-body span, .alert-body small { display: block; }
-        .alert-body span { overflow-wrap: anywhere; }
-        .alert-body small, .seen-mark { color: var(--muted); font-size: 12px; }
-        .alert-actions { display: flex; gap: 14px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 10px; }
-        .alert-actions label { color: var(--muted); font-size: 14px; display: flex; gap: 6px; align-items: center; }
-        .filters { display: flex; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 10px; }
-        .filters input[type="search"] { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; min-width: 220px; flex: 1; }
-        table.log th, table.log td { text-align: left; vertical-align: top; }
-        table.log td:first-child { font-weight: 400; color: var(--muted); }
-        td.wrap { white-space: normal; min-width: 220px; overflow-wrap: anywhere; }
-        td small { display: block; color: var(--muted); font-size: 11px; font-weight: 400; }
+        .alert-body strong { margin: 4px 0 2px; }
+        .alert-body .pill { display: inline-block; }
+        .alert-body span { font-size: 14px; }
+        .alert-body small, .seen-mark { color: var(--muted); font-size: 12px; margin-top: 4px; }
+        .alert-actions { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 10px; }
+        .alert-actions label { color: var(--muted); font-size: 14px; display: flex; gap: 8px; align-items: center; }
+        .filters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+        .filters .full { grid-column: 1 / -1; }
         .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
-        .btn-ghost.small { padding: 3px 8px; font-size: 13px; }
-        tr.detail td { position: static; background: var(--bg); white-space: normal; }
-        .change-detail { padding: 6px 0; }
-        .change-detail h3 { font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
-        .change-detail table td, .change-detail table th { text-align: left; }
-        .change-detail pre { margin: 0; padding: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 6px; max-height: 360px; overflow: auto; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
-        .more { padding: 10px; text-align: center; }
-        .warnbox { border: 1px solid #FF8A3D; border-radius: 6px; padding: 12px 14px; color: var(--text); margin-top: 8px; }
-        .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 24px; }
-        @media (max-width: 860px) { .grid3 { grid-template-columns: 1fr; } }
+        .warnbox { border: 1px solid var(--warn); border-radius: 10px; padding: 12px 14px; color: var(--text); margin-bottom: 12px; font-size: 14px; }
+
+        /* Log entries as cards */
+        .items { list-style: none; margin: 0; padding: 0; }
+        .item { padding: 12px 0; border-top: 1px solid var(--line); min-width: 0; }
+        .item:first-child { border-top: 0; padding-top: 0; }
+        .item-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+        .item-top .time { color: var(--muted); font-size: 12px; white-space: nowrap; }
+        .item-main { font-weight: 600; margin-top: 6px; }
+        .item-meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
+        .item-detail { font-size: 13px; margin-top: 4px; color: var(--text); }
+        .item-foot { display: flex; justify-content: flex-end; margin-top: 8px; }
+        .more { padding: 12px 0 0; text-align: center; }
+        .change-detail { margin-top: 10px; padding: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; font-size: 13px; }
+        .change-detail h3 { font-size: 12px; color: var(--muted); margin: 12px 0 4px; text-transform: uppercase; letter-spacing: .04em; }
+        .change-detail p { margin: 0; }
+        .fields { margin: 0; }
+        .fields div { padding: 6px 0; border-top: 1px solid var(--line); }
+        .fields dt { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--muted); }
+        .fields dd { margin: 2px 0 0; }
+        .fields .was { color: var(--muted); text-decoration: line-through; }
+        .change-detail pre { margin: 0; padding: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; max-height: 300px; overflow: auto; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+        /* Alerts settings (full-screen sheet on a phone) */
+        dialog.sheet {
+            width: 100%; max-width: 560px; max-height: 100%; height: 100%; margin: 0 auto; padding: 0; border: 0;
+            background: var(--bg); color: var(--text);
+        }
+        @media (min-width: 600px) { dialog.sheet { height: auto; max-height: calc(100% - 48px); margin: 24px auto; border: 1px solid var(--line); border-radius: 16px; } }
+        dialog.sheet::backdrop { background: rgba(0, 0, 0, .7); }
+        .sheet-head {
+            position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+            padding: calc(12px + env(safe-area-inset-top, 0px)) 16px 12px; background: var(--bg); border-bottom: 1px solid var(--line);
+        }
+        .sheet-head h2 { font-family: var(--font-display); font-size: 24px; margin: 0; }
+        .sheet-body { padding: 14px 16px calc(28px + env(safe-area-inset-bottom, 0px)); }
+        .switch-row, .check-row {
+            display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: var(--card);
+            border: 1px solid var(--line); cursor: pointer;
+        }
+        .switch-row { border-radius: var(--radius); justify-content: space-between; font-weight: 600; }
+        .switch-row small { display: block; font-weight: 400; color: var(--muted); font-size: 13px; }
+        input.switch { appearance: none; -webkit-appearance: none; width: 50px; height: 30px; border-radius: 15px; background: var(--line); position: relative; flex: none; cursor: pointer; margin: 0; transition: background .15s; }
+        input.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: var(--text); transition: transform .15s; }
+        input.switch:checked { background: var(--crown); }
+        input.switch:checked::after { transform: translateX(20px); background: #000; }
+        .phones { color: var(--muted); font-size: 13px; margin: 10px 2px 0; }
+        .phones.bad { color: var(--warn); }
+        .test-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+        .test-row span { color: var(--muted); font-size: 13px; }
+        .quick { display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0 4px; }
+        fieldset { border: 0; margin: 16px 0 0; padding: 0; min-width: 0; }
+        fieldset legend { font-family: var(--font-display); font-size: 18px; font-weight: 700; padding: 0 0 8px; }
+        .check-row { border-top-width: 0; }
+        .check-row:first-of-type { border-top-width: 1px; border-radius: var(--radius) var(--radius) 0 0; }
+        .check-row:last-of-type { border-radius: 0 0 var(--radius) var(--radius); }
+        .check-row input { width: 22px; height: 22px; accent-color: var(--crown); flex: none; margin: 0; }
+        .check-row .txt { flex: 1; min-width: 0; }
+        .check-row .txt small { display: block; color: var(--muted); font-size: 12px; }
+        .sheet.off fieldset, .sheet.off .quick { opacity: .45; }
+        .saved { color: var(--muted); font-size: 13px; min-height: 1.4em; margin: 14px 2px 0; }
+        .saved.error { color: var(--err); }
+
+        /* Toast (notifications that arrive while the app is open) */
+        #toast {
+            position: fixed; left: 16px; right: 16px; z-index: 1001; max-width: 520px; margin: 0 auto;
+            top: calc(12px + env(safe-area-inset-top, 0px)); padding: 12px 14px; border-radius: 12px;
+            background: var(--card2); border: 1px solid var(--crown); box-shadow: 0 8px 28px rgba(0, 0, 0, .6); cursor: pointer;
+        }
+        #toast strong, #toast span { display: block; } #toast span { color: var(--muted); font-size: 13px; }
 
         /* ---------- Install (PWA) ---------- */
         #install-btn {
             position: fixed; left: 50%; transform: translateX(-50%); z-index: 1000;
             bottom: calc(16px + env(safe-area-inset-bottom, 0px));
-            width: calc(100% - 32px); max-width: 340px; padding: 14px; border: 0; border-radius: 6px;
+            width: calc(100% - 32px); max-width: 340px; padding: 14px; border: 0; border-radius: 10px;
             background: var(--crown); color: #000; font-weight: 700; cursor: pointer;
             box-shadow: 0 4px 18px rgba(0, 0, 0, .6);
         }
-        #install-btn[hidden] { display: none; }
         #install-btn:disabled { opacity: .6; cursor: default; }
-        body.has-install #app { padding-bottom: 110px; }
+        body.has-install main { padding-bottom: 110px; }
         body.has-install #login { padding-bottom: 96px; }
     </style>
 </head>
@@ -171,6 +276,7 @@
 
 <div id="login">
     <form class="login-box" id="login-form" autocomplete="on">
+        <img src="icon-192.png" alt="">
         <h1>Usage and security</h1>
         <p>Admin sign-in for E&amp;C Courier.</p>
         <label for="email">Email</label>
@@ -183,154 +289,152 @@
 </div>
 
 <div id="app">
-    <header>
-        <h1><span>E&amp;C</span> Usage and security</h1>
-        <button class="btn-ghost" id="signout" type="button">Sign out</button>
+    <header class="topbar">
+        <div class="topbar-in">
+            <div class="brand-row">
+                <div class="brand"><img src="icon-192.png" alt=""><h1><span>E&amp;C</span> Usage</h1></div>
+                <button class="btn-ghost small" id="signout" type="button">Sign out</button>
+            </div>
+            <nav class="tabs" role="tablist" aria-label="Sections">
+                <button type="button" role="tab" id="tab-usage" aria-controls="view-usage" aria-selected="true" data-view="usage">API usage</button>
+                <button type="button" role="tab" id="tab-security" aria-controls="view-security" aria-selected="false" data-view="security">Security<span class="count" id="sec-tab-count" hidden></span></button>
+            </nav>
+        </div>
     </header>
 
-    <nav class="tabs" role="tablist" aria-label="Sections">
-        <button type="button" role="tab" id="tab-usage" aria-controls="view-usage" aria-selected="true" data-view="usage">Google API usage</button>
-        <button type="button" role="tab" id="tab-security" aria-controls="view-security" aria-selected="false" data-view="security">Security<span class="count" id="sec-tab-count" hidden></span></button>
-    </nav>
-
+    <main>
     <div id="view-usage" role="tabpanel" aria-labelledby="tab-usage">
-    <div class="controls">
-        <div class="ctl">
-            <span>Range</span>
-            <div class="seg" id="range-seg">
+        <div class="controls">
+            <div class="seg" id="range-seg" aria-label="Range">
                 <button type="button" data-range="today" aria-pressed="false">Today</button>
                 <button type="button" data-range="7" aria-pressed="true">7 days</button>
                 <button type="button" data-range="30" aria-pressed="false">30 days</button>
                 <button type="button" data-range="custom" aria-pressed="false">Custom</button>
             </div>
-        </div>
-        <div class="ctl" id="custom-dates">
-            <input type="date" id="from-date" aria-label="From date">
-            <span>to</span>
-            <input type="date" id="to-date" aria-label="To date">
-            <button class="btn-ghost" id="apply-custom" type="button">Show</button>
-        </div>
-        <label class="ctl">
-            <span>App</span>
-            <select id="app-filter">
-                <option value="all">Both apps</option>
-                <option value="planner">Route Planner</option>
-                <option value="watcher">Route Watcher</option>
-            </select>
-        </label>
-        <label class="ctl">
-            <span>User</span>
-            <select id="user-filter"><option value="all">All users</option></select>
-        </label>
-        <div class="ctl">
-            <span>Group APIs</span>
-            <div class="seg" id="detail-seg">
-                <button type="button" data-detail="family" aria-pressed="true">By API type</button>
-                <button type="button" data-detail="call" aria-pressed="false">By exact call</button>
+            <div id="custom-dates">
+                <input type="date" id="from-date" aria-label="From date">
+                <input type="date" id="to-date" aria-label="To date">
+                <button class="btn-ghost" id="apply-custom" type="button">Show</button>
+            </div>
+            <div class="row2">
+                <select id="app-filter" aria-label="App">
+                    <option value="all">Both apps</option>
+                    <option value="planner">Route Planner</option>
+                    <option value="watcher">Route Watcher</option>
+                </select>
+                <select id="user-filter" aria-label="Person"><option value="all">Everyone</option></select>
+            </div>
+            <div class="status-row">
+                <p class="status" id="status" role="status"></p>
+                <button class="btn-ghost small" id="refresh" type="button">Refresh</button>
             </div>
         </div>
-        <button class="btn-ghost" id="refresh" type="button">Refresh</button>
-    </div>
 
-    <p class="status" id="status" role="status"></p>
+        <div class="tiles" id="totals"></div>
 
-    <div class="totals" id="totals"></div>
-
-    <section>
-        <h2>Requests by user</h2>
-        <p class="sub">Every Google request each person triggered in this range, split by API. Highest first.</p>
-        <div class="chart-box" id="users-box"><canvas id="users-chart"></canvas></div>
-    </section>
-
-    <div class="grid2">
-        <section>
+        <section class="card" id="days-card">
             <h2>Requests per day</h2>
-            <p class="sub">Daily totals, split by API.</p>
-            <div class="chart-box" style="height:300px"><canvas id="days-chart"></canvas></div>
+            <p class="sub">Every Google request, all APIs together.</p>
+            <div class="chart-box"><canvas id="days-chart" role="img" aria-label="Requests per day"></canvas></div>
         </section>
-        <section>
+
+        <div class="grid-md">
+            <section class="card">
+                <h2>By person</h2>
+                <p class="sub">Who triggered the most requests. Highest first.</p>
+                <div id="people"></div>
+            </section>
+            <section class="card">
+                <h2>By API</h2>
+                <p class="sub">Which kind of Google request, with its busiest calls.</p>
+                <div id="apis"></div>
+            </section>
+        </div>
+
+        <section class="card">
             <h2>Busiest hours</h2>
             <p class="sub">All days in the range added together, by hour of the day.</p>
-            <div class="chart-box" style="height:300px"><canvas id="hours-chart"></canvas></div>
+            <div class="chart-box"><canvas id="hours-chart" role="img" aria-label="Requests by hour of the day"></canvas></div>
         </section>
-    </div>
 
-    <section>
-        <h2>Every user and every API</h2>
-        <p class="sub">Request counts. Red numbers under a count are requests Google refused or failed.</p>
-        <div class="table-wrap" id="matrix"></div>
-    </section>
-
-    <p class="note">
-        Counts come from the Route Planner and Route Watcher apps themselves, so they show which person
-        triggered each request. Your Google Cloud billing report is the authoritative total for what Google
-        charged. Address autocomplete is counted when a suggestion is picked, not per keystroke. Dates and
-        hours are the local time of the device that made the request.
-    </p>
+        <p class="note">
+            Counts come from the Route Planner and Route Watcher apps themselves, so they show which person
+            triggered each request. Your Google Cloud billing report is the authoritative total for what Google
+            charged. Address autocomplete is counted when a suggestion is picked, not per keystroke. Dates and
+            hours are the local time of the device that made the request.
+        </p>
     </div>
 
     <div id="view-security" role="tabpanel" aria-labelledby="tab-security" hidden>
         <div class="controls">
-            <div class="ctl">
-                <span>Range</span>
-                <div class="seg" id="sec-range">
-                    <button type="button" data-hours="24" aria-pressed="true">24 hours</button>
-                    <button type="button" data-hours="168" aria-pressed="false">7 days</button>
-                    <button type="button" data-hours="720" aria-pressed="false">30 days</button>
-                    <button type="button" data-hours="2160" aria-pressed="false">90 days</button>
+            <div class="seg" id="sec-range" aria-label="Range">
+                <button type="button" data-hours="24" aria-pressed="true">24 h</button>
+                <button type="button" data-hours="168" aria-pressed="false">7 days</button>
+                <button type="button" data-hours="720" aria-pressed="false">30 days</button>
+                <button type="button" data-hours="2160" aria-pressed="false">90 days</button>
+            </div>
+            <div class="row-btns">
+                <button class="btn-accent grow" id="sec-alert-settings" type="button" aria-haspopup="dialog">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.84V3.5a1.5 1.5 0 0 0-3 0v.66A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z"/></svg>
+                    Alerts <small id="sec-alert-summary"></small>
+                </button>
+                <button class="btn-ghost" id="sec-refresh" type="button">Refresh</button>
+            </div>
+            <p class="status" id="sec-status" role="status"></p>
+        </div>
+        <div id="sec-health"></div>
+        <div class="tiles" id="sec-tiles"></div>
+
+        <section class="card">
+            <div class="card-head">
+                <div>
+                    <h2>Alerts</h2>
+                    <p class="sub">Things worth a look, from the last 30 days.</p>
                 </div>
             </div>
-            <button class="btn-ghost" id="sec-refresh" type="button">Refresh</button>
-        </div>
-
-        <p class="status" id="sec-status" role="status"></p>
-        <div id="sec-health"></div>
-        <div class="totals" id="sec-tiles"></div>
-
-        <section>
-            <h2>Alerts</h2>
-            <p class="sub">Things worth a look: failed sign-in bursts, accounts turned away, staff data changed by a non-staff account, large or repeated deletes, changes to staff, roles and settings, and accounts changed outside the apps. Always the last 30 days.</p>
             <div class="alert-actions">
-                <label><input type="checkbox" id="sec-show-seen"> Show alerts already seen</label>
-                <button class="btn-ghost" id="sec-ack-all" type="button">Mark all as seen</button>
+                <label><input type="checkbox" id="sec-show-seen"> Show seen</label>
+                <button class="btn-ghost small" id="sec-ack-all" type="button">Mark all as seen</button>
             </div>
             <div id="sec-alerts"></div>
         </section>
 
-        <div class="grid2">
-            <section>
-                <h2>Sign-ins over time</h2>
-                <p class="sub">Successful, failed and refused sign-ins across every app.</p>
-                <div class="chart-box" style="height:280px"><canvas id="sec-signins-chart"></canvas></div>
-            </section>
-            <section>
-                <h2>Database changes by area</h2>
-                <p class="sub">Records created, updated and deleted.</p>
-                <div class="chart-box" id="sec-areas-box"><canvas id="sec-areas-chart"></canvas></div>
-            </section>
-        </div>
+        <section class="card">
+            <h2>Sign-ins over time</h2>
+            <p class="sub">Every app together.</p>
+            <div class="chart-box"><canvas id="sec-signins-chart" role="img" aria-label="Sign-ins over time"></canvas></div>
+            <ul class="legend" aria-hidden="true">
+                <li><i style="background:var(--ok)"></i>Signed in</li>
+                <li><i style="background:var(--err)"></i>Failed or refused</li>
+            </ul>
+        </section>
 
-        <div class="grid3">
-            <section>
+        <div class="grid-md">
+            <section class="card">
+                <h2>Database changes by area</h2>
+                <p class="sub">Most changed first.</p>
+                <div id="sec-areas"></div>
+            </section>
+            <section class="card">
+                <h2>Most changes by</h2>
+                <p class="sub">Who changed the database most.</p>
+                <div id="sec-top-writers"></div>
+            </section>
+            <section class="card">
                 <h2>Failed sign-ins by email</h2>
                 <p class="sub">Failed and refused, top 10.</p>
-                <div class="table-wrap" id="sec-top-email"></div>
+                <div id="sec-top-email"></div>
             </section>
-            <section>
+            <section class="card">
                 <h2>Failed sign-ins by IP</h2>
                 <p class="sub">Failed and refused, top 10.</p>
-                <div class="table-wrap" id="sec-top-ip"></div>
-            </section>
-            <section>
-                <h2>Most changes by</h2>
-                <p class="sub">Who changed the database most, top 10.</p>
-                <div class="table-wrap" id="sec-top-writers"></div>
+                <div id="sec-top-ip"></div>
             </section>
         </div>
 
-        <section>
+        <section class="card">
             <h2>Sign-in activity</h2>
-            <p class="sub">Every sign-in, failed or refused sign-in, new or deleted account, account change, reset email and SMS code. Newest first.</p>
+            <p class="sub">Sign-ins, failed or refused sign-ins, new and deleted accounts, account changes, reset emails and SMS codes. Newest first.</p>
             <div class="filters">
                 <select id="sec-ev-type" aria-label="Kind of activity">
                     <option value="all">Everything but visits</option>
@@ -351,14 +455,14 @@
                     <option value="visit">PlutoScan visits</option>
                 </select>
                 <select id="sec-ev-app" aria-label="App"><option value="all">All apps</option></select>
-                <input type="search" id="sec-ev-q" placeholder="Search email, IP, phone, uid, error…" aria-label="Search sign-in activity">
+                <input class="full" type="search" id="sec-ev-q" placeholder="Search email, IP, phone, error…" aria-label="Search sign-in activity">
             </div>
-            <div class="table-wrap" id="sec-events"></div>
+            <div id="sec-events"></div>
         </section>
 
-        <section>
+        <section class="card">
             <h2>Database changes</h2>
-            <p class="sub">Every change to the watched parts of the database, with who made it and the values before and after. Press Details for the full record.</p>
+            <p class="sub">Every change to the watched parts of the database, with who made it. Tap Details for before and after.</p>
             <div class="filters">
                 <select id="sec-ch-area" aria-label="Area"><option value="all">All areas</option></select>
                 <select id="sec-ch-action" aria-label="Action">
@@ -367,22 +471,22 @@
                     <option value="updated">Updated</option>
                     <option value="deleted">Deleted</option>
                 </select>
-                <select id="sec-ch-by" aria-label="Made by">
-                    <option value="all">Anyone</option>
+                <select class="full" id="sec-ch-by" aria-label="Made by">
+                    <option value="all">Made by anyone</option>
                     <option value="app_user">Signed-in people</option>
                     <option value="admin">Server or console</option>
                     <option value="unauthenticated">Not signed in</option>
                 </select>
-                <input type="search" id="sec-ch-q" placeholder="Search record, person, field or value…" aria-label="Search database changes">
+                <input class="full" type="search" id="sec-ch-q" placeholder="Search record, person, field or value…" aria-label="Search database changes">
             </div>
-            <div class="table-wrap" id="sec-changes"></div>
+            <div id="sec-changes"></div>
         </section>
 
-        <section>
+        <section class="card">
             <h2>Accounts</h2>
-            <p class="sub">Every sign-in account in Firebase, checked every 30 minutes, with the devices each has signed in from. Pick PlutoScan to see its accounts and who has paid.</p>
+            <p class="sub">Every sign-in account in Firebase, checked every 30 minutes. Pick PlutoScan to see its accounts and who has paid.</p>
             <div class="filters">
-                <select id="sec-acc-kind" aria-label="Kind of account">
+                <select class="full" id="sec-acc-kind" aria-label="Kind of account">
                     <option value="all">All E&amp;C accounts</option>
                     <option value="staff">Staff (@ec.com)</option>
                     <option value="customers">Everyone else</option>
@@ -391,9 +495,9 @@
                     <option value="pluto_paid">PlutoScan, paid</option>
                     <option value="pluto_unpaid">PlutoScan, not paid</option>
                 </select>
-                <input type="search" id="sec-acc-q" placeholder="Search email, phone, uid…" aria-label="Search accounts">
+                <input class="full" type="search" id="sec-acc-q" placeholder="Search email, phone, uid…" aria-label="Search accounts">
             </div>
-            <div class="table-wrap" id="sec-accounts"></div>
+            <div id="sec-accounts"></div>
         </section>
 
         <p class="note">
@@ -404,7 +508,37 @@
             costs down. Entries are kept for 90 days, alerts for a year.
         </p>
     </div>
+    </main>
 </div>
+
+<dialog class="sheet" id="alert-sheet" aria-labelledby="alert-sheet-title">
+    <div class="sheet-head">
+        <h2 id="alert-sheet-title">Alerts</h2>
+        <button class="btn-ghost" type="button" id="alert-sheet-close">Done</button>
+    </div>
+    <div class="sheet-body">
+        <p class="sub">Tick the alerts you want on your phone. Unticked alerts still show in the Security tab, they just don't send a notification.</p>
+        <label class="switch-row">
+            <span>Phone notifications<small id="notify-on-text"></small></span>
+            <input type="checkbox" class="switch" role="switch" id="notify-on">
+        </label>
+        <p class="phones" id="notify-phones"></p>
+        <div class="test-row">
+            <button class="btn-ghost small" type="button" id="notify-test">Send a test notification</button>
+            <span id="notify-test-msg" role="status"></span>
+        </div>
+        <div class="quick">
+            <button class="btn-ghost small" type="button" data-preset="all">Tick all</button>
+            <button class="btn-ghost small" type="button" data-preset="high">Only high</button>
+            <button class="btn-ghost small" type="button" data-preset="default">Back to defaults</button>
+            <button class="btn-ghost small" type="button" data-preset="none">Untick all</button>
+        </div>
+        <div id="notify-types"></div>
+        <p class="saved" id="notify-saved" role="status"></p>
+    </div>
+</dialog>
+
+<div id="toast" role="status" hidden></div>
 
 <script>
     // ===== FIREBASE =====
@@ -416,8 +550,13 @@
     });
     const auth = firebase.auth();
     const db = firebase.database();
+    const TS = firebase.database.ServerValue.TIMESTAMP;
     const ADMIN_EMAIL = 'justin@ec.com';
     const MAX_DAYS = 92;
+
+    // Running as the installed Android app (Capacitor)? Then phone notifications come through Firebase Cloud Messaging.
+    const CAP = window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform() ? window.Capacitor : null;
+    const Push = CAP ? CAP.registerPlugin('PushNotifications') : null;
 
     // ---------- SECURITY LOG ----------
     // Failed and refused sign-ins are reported to the E&C security log (the Security section of the
@@ -468,11 +607,11 @@
 
     // ===== API NAMES =====
     const FAMILIES = {
-        maps:       { label: 'Map loads',                 color: '#E8E400' },
-        routes:     { label: 'Routes API',                color: '#4FA3FF' },
-        geocode:    { label: 'Geocoding',                 color: '#FF8A3D' },
-        places:     { label: 'Places Autocomplete',       color: '#3DDC97' },
-        directions: { label: 'Directions (ETA fallback)', color: '#C77DFF' }
+        maps:       'Map loads',
+        routes:     'Routes API',
+        geocode:    'Geocoding',
+        places:     'Places Autocomplete',
+        directions: 'Directions (ETA fallback)'
     };
     const CALLS = {
         maps__main:             'Planner main map',
@@ -492,23 +631,13 @@
         directions__eta:        'ETA fallback (Watcher)'
     };
     function familyOf(api) { return String(api).split('__')[0]; }
-    function familyLabel(f) { return FAMILIES[f] ? FAMILIES[f].label : f; }
+    function familyLabel(f) { return FAMILIES[f] || f; }
     function callLabel(api) { return CALLS[api] || api; }
-
-    // Shades of the family color for exact-call mode, so related calls stay visually grouped.
-    function shade(hex, step) {
-        const n = parseInt(hex.slice(1), 16);
-        let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-        const k = [1, 0.72, 0.52, 1.25, 0.86][step % 5];
-        const f = v => Math.max(0, Math.min(255, Math.round(k >= 1 ? v + (255 - v) * (k - 1) * 2 : v * k)));
-        return 'rgb(' + f(r) + ',' + f(g) + ',' + f(b) + ')';
-    }
 
     // ===== STATE =====
     let records = [];      // { date, uid, app, api, hour, ok, err }
     let names = {};        // uid -> username
     let range = { from: null, to: null };
-    let detail = 'family';
     const charts = {};
 
     // ===== HELPERS =====
@@ -528,18 +657,21 @@
     }
     function userName(uid) { return names[uid] || ('user ' + uid.slice(0, 6)); }
     function fmt(n) { return n.toLocaleString('en-CA'); }
+    // 1,284 / 12.9K / 1.2M, for tiles and chart axes
+    function compact(n) { return n < 10000 ? fmt(n) : new Intl.NumberFormat('en-CA', { notation: 'compact', maximumFractionDigits: 1 }).format(n); }
     function setStatus(msg, isError) { const el = $('status'); el.textContent = msg || ''; el.classList.toggle('error', !!isError); }
-    function keyOf(r) { return detail === 'family' ? familyOf(r.api) : r.api; }
-    function labelOf(k) { return detail === 'family' ? familyLabel(k) : callLabel(k); }
-    function colorMap(keys) {
-        const map = {}, used = {};
-        keys.forEach(k => {
-            const fam = detail === 'family' ? k : familyOf(k);
-            const base = FAMILIES[fam] ? FAMILIES[fam].color : '#8A8A80';
-            used[fam] = (used[fam] || 0);
-            map[k] = detail === 'family' ? base : shade(base, used[fam]++);
-        });
-        return map;
+    function tile(value, label, tone, word) {
+        return '<div class="tile' + (tone ? ' ' + tone : '') + '"><strong' + (word ? ' class="word"' : '') + '>' +
+            (typeof value === 'number' ? compact(value) : esc(value)) + '</strong><span>' + esc(label) + '</span></div>';
+    }
+    // A ranked list: one row per item, with a bar scaled to the largest. rows: [{ name, value, sub (HTML), bad }]
+    function rankList(rows, emptyText, limit) {
+        if (!rows.length) return '<div class="empty">' + esc(emptyText) + '</div>';
+        const max = Math.max(...rows.map(r => r.value), 1);
+        return '<ol class="rank">' + rows.slice(0, limit || rows.length).map(r =>
+            '<li><div class="rank-top"><span class="rank-name">' + esc(r.name) + '</span><span class="rank-val">' + fmt(r.value) + '</span></div>' +
+            '<div class="bar' + (r.bad ? ' bad' : '') + '"><i style="width:' + (r.value / max * 100).toFixed(1) + '%"></i></div>' +
+            (r.sub ? '<div class="rank-sub">' + r.sub + '</div>' : '') + '</li>').join('') + '</ol>';
     }
 
     // ===== AUTH =====
@@ -555,7 +687,10 @@
             })
             .finally(() => { $('login-btn').disabled = false; });
     });
-    $('signout').addEventListener('click', () => auth.signOut());
+    $('signout').addEventListener('click', async () => {
+        await removePushToken(); // stop notifications to this phone while signed out
+        auth.signOut();
+    });
 
     auth.onAuthStateChanged(user => {
         if (!user) {
@@ -574,6 +709,7 @@
         setRange('7');
         showView(location.hash === '#security' ? 'security' : 'usage');
         loadAlertCount();
+        setupPush();
     });
 
     // ===== SECTIONS =====
@@ -583,6 +719,7 @@
         $('view-security').hidden = view !== 'security';
         if (view === 'security') ecSecurity.show(); else ecSecurity.hide();
         history.replaceState(null, '', view === 'security' ? '#security' : location.pathname + location.search);
+        window.scrollTo(0, 0);
     }
     document.querySelector('.tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) showView(b.dataset.view); });
 
@@ -601,6 +738,64 @@
             $('sec-tab-count').textContent = open > 999 ? '999+' : String(open);
             $('sec-tab-count').hidden = !open;
         }).catch(() => { $('sec-tab-count').hidden = true; });
+    }
+
+    // ===== PHONE NOTIFICATIONS (Android app only) =====
+    // The phone registers with Firebase Cloud Messaging and saves its token under
+    // security_log/push_tokens. auditAlertPush (functions/index.js) sends each new alert whose kind
+    // is ticked in the Alerts settings to every phone there, even when the app is closed.
+    const ALERT_CHANNEL = 'security_alerts'; // must match PUSH_CHANNEL in functions/index.js
+    const pushKey = t => String(t).replace(/[.#$\[\]\/]/g, '_').slice(-200);
+    window.ecPush = { native: !!CAP, state: CAP ? 'off' : 'web', token: null }; // state: web | off | blocked | error | on
+    function toast(title, text, onTap) {
+        const el = $('toast');
+        el.innerHTML = '<strong>' + esc(title) + '</strong>' + (text ? '<span>' + esc(text) + '</span>' : '');
+        el.hidden = false;
+        el.onclick = () => { el.hidden = true; if (onTap) onTap(); };
+        clearTimeout(toast.t);
+        toast.t = setTimeout(() => { el.hidden = true; }, 8000);
+    }
+    let pushListening = false;
+    async function setupPush() {
+        if (!Push) return;
+        if (!pushListening) {
+            pushListening = true;
+            Push.addListener('registration', async ({ value }) => {
+                ecPush.token = value;
+                if (!auth.currentUser) return;
+                const model = (navigator.userAgent.match(/Android [^;)]*; ([^;)]+)/) || [])[1];
+                try {
+                    await db.ref('security_log/push_tokens/' + pushKey(value)).set({
+                        token: value, platform: CAP.getPlatform(), device: String(model || 'Android phone').slice(0, 200), updated_at: TS });
+                    ecPush.state = 'on';
+                } catch (err) {
+                    ecPush.state = 'error';
+                    toast('Notifications could not be turned on', err && err.message);
+                }
+                ecSecurity.refreshSettings();
+            });
+            Push.addListener('registrationError', () => { ecPush.state = 'error'; ecSecurity.refreshSettings(); });
+            // An alert arriving while the app is open: Android doesn't show it, so the page does
+            Push.addListener('pushNotificationReceived', n => {
+                toast(n.title || 'Security alert', n.body, () => showView('security'));
+                loadAlertCount();
+                ecSecurity.refreshIfShown();
+            });
+            Push.addListener('pushNotificationActionPerformed', () => showView('security'));
+        }
+        try {
+            await Push.createChannel({ id: ALERT_CHANNEL, name: 'Security alerts', description: 'The alerts ticked in Security > Alerts.',
+                importance: 4, visibility: 1, vibration: true, lights: true, lightColor: '#E8E400' });
+            let perm = await Push.checkPermissions();
+            if (perm.receive !== 'granted' && perm.receive !== 'denied') perm = await Push.requestPermissions();
+            if (perm.receive !== 'granted') { ecPush.state = 'blocked'; ecSecurity.refreshSettings(); return; }
+            await Push.register(); // the 'registration' listener saves the token
+        } catch (err) { ecPush.state = 'error'; ecSecurity.refreshSettings(); }
+    }
+    async function removePushToken() {
+        if (!ecPush.token || !auth.currentUser) return;
+        try { await db.ref('security_log/push_tokens/' + pushKey(ecPush.token)).remove(); } catch (e) { /* ignore */ }
+        ecPush.state = 'off';
     }
 
     // ===== CONTROLS =====
@@ -630,10 +825,6 @@
         if (daysBetween(from, to).length > MAX_DAYS) { setStatus('Pick a range of ' + MAX_DAYS + ' days or less.', true); return; }
         range = { from, to };
         load();
-    });
-    $('detail-seg').addEventListener('click', e => {
-        const b = e.target.closest('button'); if (!b) return;
-        detail = b.dataset.detail; pressed('detail-seg', 'detail', detail); render();
     });
     $('app-filter').addEventListener('change', render);
     $('user-filter').addEventListener('change', render);
@@ -670,7 +861,7 @@
                 });
             });
             fillUserFilter();
-            setStatus('Updated at ' + new Date().toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' }));
+            setStatus('Updated ' + new Date().toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' }));
             render();
         } catch (err) {
             console.error(err);
@@ -685,7 +876,7 @@
         const keep = sel.value;
         const uids = Array.from(new Set(records.map(r => r.uid)))
             .sort((a, b) => userName(a).localeCompare(userName(b)));
-        sel.innerHTML = '<option value="all">All users</option>' +
+        sel.innerHTML = '<option value="all">Everyone</option>' +
             uids.map(u => '<option value="' + esc(u) + '">' + esc(userName(u)) + '</option>').join('');
         sel.value = uids.includes(keep) ? keep : 'all';
     }
@@ -695,143 +886,90 @@
         const app = $('app-filter').value, user = $('user-filter').value;
         return records.filter(r => (app === 'all' || r.app === app) && (user === 'all' || r.uid === user));
     }
+    // Adds up n (requests) and err (refused or failed) per key
+    function sums(rows, keyFn) {
+        const m = {};
+        rows.forEach(r => { const k = keyFn(r); const s = m[k] = m[k] || { key: k, n: 0, err: 0 }; s.n += r.ok + r.err; s.err += r.err; });
+        return Object.values(m).sort((a, b) => b.n - a.n);
+    }
 
     function render() {
         const rows = filtered();
-        const total = r => r.ok + r.err;
-
-        // Keys (API type or exact call) ordered by volume, largest first.
-        const keyTotals = {};
-        rows.forEach(r => { const k = keyOf(r); keyTotals[k] = (keyTotals[k] || 0) + total(r); });
-        const keys = Object.keys(keyTotals).sort((a, b) => keyTotals[b] - keyTotals[a]);
-        const colors = colorMap(keys);
-
-        // Per user
-        const userTotals = {}, userKey = {}, userErr = {};
-        rows.forEach(r => {
-            const k = keyOf(r);
-            userTotals[r.uid] = (userTotals[r.uid] || 0) + total(r);
-            userErr[r.uid] = (userErr[r.uid] || 0) + r.err;
-            userKey[r.uid] = userKey[r.uid] || {};
-            const cell = userKey[r.uid][k] = userKey[r.uid][k] || { n: 0, err: 0 };
-            cell.n += total(r); cell.err += r.err;
-        });
-        const uids = Object.keys(userTotals).sort((a, b) => userTotals[b] - userTotals[a]);
-
-        renderTotals(rows, uids, userTotals, keys, keyTotals);
-        renderUsers(uids, keys, userKey, colors);
-        renderDays(rows, keys, colors);
-        renderHours(rows, keys, colors);
-        renderMatrix(uids, keys, userKey, userTotals, userErr, keyTotals);
-    }
-
-    function renderTotals(rows, uids, userTotals, keys, keyTotals) {
+        const people = sums(rows, r => r.uid);
+        const fams = sums(rows, r => familyOf(r.api));
         const all = rows.reduce((s, r) => s + r.ok + r.err, 0);
         const errs = rows.reduce((s, r) => s + r.err, 0);
-        const top = uids[0];
-        const topKey = keys[0];
+
         $('totals').innerHTML =
-            '<div><strong>' + fmt(all) + '</strong>Requests</div>' +
-            '<div><strong>' + fmt(errs) + '</strong>Refused or failed</div>' +
-            '<div><strong>' + (top ? esc(userName(top)) : '—') + '</strong>' +
-                (top ? 'Most requests (' + fmt(userTotals[top]) + ')' : 'Most requests') + '</div>' +
-            '<div><strong>' + (topKey ? esc(labelOf(topKey)) : '—') + '</strong>' +
-                (topKey ? 'Busiest API (' + fmt(keyTotals[topKey]) + ')' : 'Busiest API') + '</div>';
+            tile(all, 'Requests') +
+            tile(errs, 'Refused or failed', errs ? 'warn' : '') +
+            tile(people[0] ? userName(people[0].key) : '—', people[0] ? 'Most requests (' + fmt(people[0].n) + ')' : 'Most requests', '', true) +
+            tile(fams[0] ? familyLabel(fams[0].key) : '—', fams[0] ? 'Busiest API (' + fmt(fams[0].n) + ')' : 'Busiest API', '', true);
+
+        const none = 'No Google requests recorded for this range and filter.';
+        $('people').innerHTML = rankList(people.map(p => {
+            const top = sums(rows.filter(r => r.uid === p.key), r => familyOf(r.api)).slice(0, 3);
+            return { name: userName(p.key), value: p.n,
+                sub: esc(top.map(t => familyLabel(t.key) + ' ' + fmt(t.n)).join(' · ')) + (p.err ? ' · <span class="e">' + fmt(p.err) + ' failed</span>' : '') };
+        }), none);
+        $('apis').innerHTML = rankList(fams.map(f => {
+            const calls = sums(rows.filter(r => familyOf(r.api) === f.key), r => r.api).slice(0, 3);
+            return { name: familyLabel(f.key), value: f.n,
+                sub: esc(calls.map(c => callLabel(c.key) + ' ' + fmt(c.n)).join(' · ')) + (f.err ? ' · <span class="e">' + fmt(f.err) + ' failed</span>' : '') };
+        }), none);
+
+        // Per day (only when the range has more than one day)
+        const days = daysBetween(range.from, range.to);
+        $('days-card').hidden = days.length < 2;
+        if (days.length >= 2) {
+            const byDay = {};
+            rows.forEach(r => { byDay[r.date] = (byDay[r.date] || 0) + r.ok + r.err; });
+            columnChart('days-chart', days.map(d => parseYmd(d).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })),
+                [{ label: 'Requests', data: days.map(d => byDay[d] || 0), color: '#E8E400' }], charts);
+        }
+        // By hour of the day
+        const byHour = new Array(24).fill(0);
+        rows.forEach(r => { if (r.hour >= 0 && r.hour < 24) byHour[r.hour] += r.ok + r.err; });
+        columnChart('hours-chart', byHour.map((_, h) => (h % 12 === 0 ? 12 : h % 12) + (h < 12 ? 'a' : 'p')),
+            [{ label: 'Requests', data: byHour, color: '#E8E400' }], charts);
     }
 
-    // Shared Chart.js look
+    // ===== CHARTS =====
+    // Simple column charts: one colour per series, thin bars, a light grid, a tooltip on tap.
     Chart.defaults.color = '#A3A396';
     Chart.defaults.borderColor = '#2A2A26';
     Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
-    function baseOptions(horizontal) {
-        return {
-            responsive: true, maintainAspectRatio: false, animation: false,
-            indexAxis: horizontal ? 'y' : 'x',
-            interaction: { mode: 'index', intersect: false },
-            plugins: {
-                legend: { position: 'bottom', labels: { boxWidth: 12, boxHeight: 12, padding: 14 } },
-                tooltip: {
-                    callbacks: {
-                        footer: items => 'Total: ' + fmt(items.reduce((s, i) => s + (i.raw || 0), 0))
-                    }
-                }
+    Chart.defaults.font.size = 12;
+    function columnChart(id, labels, series, store) {
+        if (store[id]) store[id].destroy();
+        const stacked = series.length > 1;
+        store[id] = new Chart($(id), {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: series.map(s => ({
+                    label: s.label, data: s.data, backgroundColor: s.color,
+                    borderColor: '#141412', borderWidth: stacked ? { top: 2 } : 0, borderSkipped: 'bottom',
+                    borderRadius: { topLeft: 4, topRight: 4 }, maxBarThickness: 24, categoryPercentage: .8, barPercentage: .9
+                }))
             },
-            scales: {
-                x: { stacked: true, beginAtZero: true, grid: { display: horizontal }, ticks: horizontal ? { precision: 0 } : {} },
-                y: { stacked: true, beginAtZero: true, grid: { display: !horizontal }, ticks: horizontal ? {} : { precision: 0 } }
+            options: {
+                responsive: true, maintainAspectRatio: false, animation: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: '#1C1C19', borderColor: '#2A2A26', borderWidth: 1, padding: 10, titleColor: '#F4F4EE', bodyColor: '#F4F4EE',
+                        callbacks: { label: i => ' ' + i.dataset.label + ': ' + fmt(i.raw || 0) }
+                    }
+                },
+                scales: {
+                    x: { stacked, grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, autoSkipPadding: 10 } },
+                    y: { stacked, beginAtZero: true, grid: { color: '#22221F' }, border: { display: false },
+                        ticks: { precision: 0, maxTicksLimit: 5, callback: v => compact(v) } }
+                }
             }
-        };
-    }
-    function draw(id, type, labels, datasets, options) {
-        if (charts[id]) charts[id].destroy();
-        charts[id] = new Chart($(id), { type, data: { labels, datasets }, options });
-    }
-    function datasetsFor(keys, colors, valueFor) {
-        return keys.map(k => ({
-            label: labelOf(k), data: valueFor(k), backgroundColor: colors[k],
-            borderWidth: 0, borderRadius: 2, maxBarThickness: 46
-        }));
-    }
-
-    function renderUsers(uids, keys, userKey, colors) {
-        // Height grows with the number of people so every bar stays readable.
-        $('users-box').style.height = Math.max(200, uids.length * 44 + 110) + 'px';
-        draw('users-chart', 'bar', uids.map(userName),
-            datasetsFor(keys, colors, k => uids.map(u => (userKey[u][k] ? userKey[u][k].n : 0))),
-            baseOptions(true));
-    }
-
-    function renderDays(rows, keys, colors) {
-        const days = daysBetween(range.from, range.to);
-        const byDay = {};
-        rows.forEach(r => {
-            const k = keyOf(r);
-            byDay[r.date] = byDay[r.date] || {};
-            byDay[r.date][k] = (byDay[r.date][k] || 0) + r.ok + r.err;
         });
-        const labels = days.map(d => parseYmd(d).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }));
-        draw('days-chart', 'bar', labels,
-            datasetsFor(keys, colors, k => days.map(d => (byDay[d] && byDay[d][k]) || 0)),
-            baseOptions(false));
-    }
-
-    function renderHours(rows, keys, colors) {
-        const hours = Array.from({ length: 24 }, (_, i) => i);
-        const byHour = {};
-        rows.forEach(r => {
-            const k = keyOf(r);
-            byHour[r.hour] = byHour[r.hour] || {};
-            byHour[r.hour][k] = (byHour[r.hour][k] || 0) + r.ok + r.err;
-        });
-        const labels = hours.map(h => (h % 12 === 0 ? 12 : h % 12) + (h < 12 ? 'a' : 'p'));
-        draw('hours-chart', 'bar', labels,
-            datasetsFor(keys, colors, k => hours.map(h => (byHour[h] && byHour[h][k]) || 0)),
-            baseOptions(false));
-    }
-
-    function renderMatrix(uids, keys, userKey, userTotals, userErr, keyTotals) {
-        if (!uids.length) {
-            $('matrix').innerHTML = '<div class="empty" style="padding:20px">No Google requests recorded for this range and filter. ' +
-                'Counts start appearing after the updated Route Planner and Route Watcher are in use.</div>';
-            return;
-        }
-        const keyErr = {};
-        uids.forEach(u => keys.forEach(k => { if (userKey[u][k]) keyErr[k] = (keyErr[k] || 0) + userKey[u][k].err; }));
-        const cell = (n, e) => (n ? fmt(n) : '<span style="color:#55554C">0</span>') + (e ? '<span class="e">' + fmt(e) + ' failed</span>' : '');
-        let html = '<table><thead><tr><th scope="col">User</th>' +
-            keys.map(k => '<th scope="col">' + esc(labelOf(k)) + '</th>').join('') +
-            '<th scope="col" class="total">Total</th></tr></thead><tbody>';
-        uids.forEach(u => {
-            html += '<tr><td>' + esc(userName(u)) + '</td>' +
-                keys.map(k => { const c = userKey[u][k]; return '<td>' + cell(c ? c.n : 0, c ? c.err : 0) + '</td>'; }).join('') +
-                '<td class="total">' + cell(userTotals[u], userErr[u]) + '</td></tr>';
-        });
-        const grand = uids.reduce((s, u) => s + userTotals[u], 0);
-        const grandErr = uids.reduce((s, u) => s + userErr[u], 0);
-        html += '</tbody><tfoot><tr><td>All users</td>' +
-            keys.map(k => '<td>' + cell(keyTotals[k], keyErr[k] || 0) + '</td>').join('') +
-            '<td class="total">' + cell(grand, grandErr) + '</td></tr></tfoot></table>';
-        $('matrix').innerHTML = html;
     }
 </script>
 <script src="security.js"></script>
@@ -839,8 +977,9 @@
 <button id="install-btn" type="button" hidden>Install now</button>
 
 <script>
-    // ===== PWA: service worker + install button =====
+    // ===== PWA: service worker + install button (the website only; the Android app has neither) =====
     (function () {
+        if (CAP) return;
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
                 navigator.serviceWorker.register('./sw.js').catch(function (err) {

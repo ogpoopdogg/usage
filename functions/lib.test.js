@@ -212,3 +212,47 @@ test('a signed-in report finds the account\'s own sign-in row nearest the sign-i
   assert.equal(L.signInRowFor(events, 'u3', AT), null);
   assert.equal(L.signInRowFor(null, 'u1', AT), null);
 });
+
+test('every alert has a kind from alert-types.js, and the settings decide which ones notify', () => {
+  const T = require('./alert-types');
+  const fs = require('fs');
+  // Every type: '...' the server code gives an alert is in the list the settings show
+  const used = new Set();
+  for (const f of ['index.js', 'lib.js']) {
+    for (const m of fs.readFileSync(__dirname + '/' + f, 'utf8').matchAll(/type: '([a-z_]+)', level/g)) used.add(m[1]);
+  }
+  for (const f of ['index.js', 'lib.js']) {
+    for (const m of fs.readFileSync(__dirname + '/../plutoscan-audit/functions/' + f, 'utf8').matchAll(/type: '([a-z_]+)', level/g)) used.add('pluto_' + m[1]);
+  }
+  used.add('access_change'); used.add('settings_change');
+  assert.ok(used.size >= 20);
+  for (const t of used) assert.ok(T.TYPES[t], t + ' is missing from alert-types.js');
+
+  const watch = L.WATCHES.find((w) => w.name === 'staff');
+  const entry = L.changeEntry({ watch, path: 'staff/u1', before: null, after: true, authType: 'unauthenticated', at: AT });
+  assert.deepEqual(L.changeAlerts(entry, watch, { staff: null }).map((a) => a.type), ['no_signin_change', 'access_change']);
+  const tc = L.WATCHES.find((w) => w.name === 'tcSettings');
+  const e2 = L.changeEntry({ watch: tc, path: 'timeclock/settings', before: { a: 1 }, after: { a: 2 }, authType: 'admin', at: AT });
+  assert.deepEqual(L.changeAlerts(e2, tc, { staff: null }).map((a) => a.type), ['settings_change']);
+
+  assert.equal(T.typeOf({ type: 'large_delete' }), 'large_delete');
+  assert.equal(T.typeOf({ title: 'old alert' }), 'other');
+  assert.equal(T.typeOf({ src: 'plutoscan/users' }), 'pluto_other');
+  // Never saved: the defaults (low kinds off)
+  assert.equal(T.wantsPush({ type: 'large_delete' }, null), true);
+  assert.equal(T.wantsPush({ type: 'new_device' }, null), false);
+  // Saved ticks win; the main switch turns everything off
+  assert.equal(T.wantsPush({ type: 'new_device' }, { on: true, types: { new_device: true } }), true);
+  assert.equal(T.wantsPush({ type: 'large_delete' }, { on: true, types: { large_delete: false } }), false);
+  assert.equal(T.wantsPush({ type: 'large_delete' }, { on: false, types: { large_delete: true } }), false);
+});
+
+test('PlutoScan alerts get a pluto_ kind', () => {
+  const send = (o) => JSON.stringify(o);
+  const a = L.ingestEntry(send({ kind: 'alerts', entry: { type: 'purchase', level: 'low', title: 'New purchase', detail: 'x' } }), 'plutoscan', AT);
+  assert.equal(a.entry.type, 'pluto_purchase');
+  const b = L.ingestEntry(send({ kind: 'alerts', entry: { type: 'large_delete', level: 'high', title: 't' } }), 'plutoscan', AT);
+  assert.equal(b.entry.type, 'pluto_other');
+  const c = L.ingestEntry(send({ kind: 'alerts', entry: { level: 'high', title: 'from before kinds' } }), 'plutoscan', AT);
+  assert.equal(c.entry.type, 'pluto_other');
+});

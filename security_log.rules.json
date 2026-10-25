@@ -7,6 +7,30 @@
         ".write": "auth != null && auth.token.email.toLowerCase() === 'justin@ec.com'",
         ".validate": "newData.isBoolean() && root.child('security_log/alerts').child($alertId).exists()"
       }
+    },
+    "notify": {
+      ".write": "auth != null && auth.token.email.toLowerCase() === 'justin@ec.com'",
+      ".validate": "newData.hasChildren(['on'])",
+      "on": { ".validate": "newData.isBoolean()" },
+      "types": {
+        "$type": { ".validate": "newData.isBoolean() && $type.matches(/^[a-z_]{1,40}$/)" }
+      },
+      "$other": { ".validate": false }
+    },
+    "push_tokens": {
+      "$key": {
+        ".write": "auth != null && auth.token.email.toLowerCase() === 'justin@ec.com'",
+        ".validate": "newData.hasChildren(['token', 'updated_at']) && newData.child('token').isString() && newData.child('token').val().length <= 4096",
+        "token": { ".validate": true },
+        "platform": { ".validate": "newData.isString() && newData.val().length <= 20" },
+        "device": { ".validate": "newData.isString() && newData.val().length <= 200" },
+        "updated_at": { ".validate": "newData.val() === now" },
+        "$other": { ".validate": false }
+      }
+    },
+    "push_test": {
+      ".write": "auth != null && auth.token.email.toLowerCase() === 'justin@ec.com'",
+      ".validate": "newData.val() === now"
     }
   }
 }
