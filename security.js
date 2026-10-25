@@ -55,6 +55,12 @@
         return (today ? '' : d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }) + ' ') +
             d.toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
     }
+    // Entries forwarded from another app (PlutoScan) are stamped with when they arrived here;
+    // their own time is kept in sentAt. Show it when they arrived late, e.g. resent after an outage.
+    function whenOf(x) {
+        const late = Number.isFinite(x.sentAt) && Math.abs(x.at - x.sentAt) > 120000;
+        return when(x.at) + (late ? ' (happened ' + when(x.sentAt) + ')' : '');
+    }
     function ago(at) {
         const s = Math.round((Date.now() - at) / 1000);
         if (s < 90) return 'just now';
@@ -203,7 +209,7 @@
         $('sec-alerts').innerHTML = rows.slice(0, 300).map(a =>
             '<div class="alert' + (data.acks[a.id] ? ' seen' : '') + '">' +
                 '<div class="alert-body">' + pill(a.level || 'low', tone[a.level] || 'info') + '<strong>' + esc(a.title) + '</strong><span>' + esc(a.detail) + '</span>' +
-                '<small>' + esc(when(a.at)) + ' · ' + esc(AT.TYPES[AT.typeOf(a)].label) + (AT.wantsPush(a, data.notify) ? '' : ' · no notification') + '</small></div>' +
+                '<small>' + esc(whenOf(a)) + ' · ' + esc(AT.TYPES[AT.typeOf(a)].label) + (AT.wantsPush(a, data.notify) ? '' : ' · no notification') + '</small></div>' +
                 (data.acks[a.id] ? '<span class="seen-mark">Seen</span>'
                     : '<button class="btn-ghost small" type="button" data-ack="' + esc(a.id) + '">Seen</button>') +
             '</div>').join('') +
@@ -314,7 +320,7 @@
                 const d = detail(e);
                 return '<li class="item">' +
                     '<div class="item-top">' + pill(e.type === 'signup' && e.ok === false ? 'Sign-up blocked' : typeLabel(e.type), tone(e)) +
-                        '<span class="time">' + esc(when(e.at)) + '</span></div>' +
+                        '<span class="time">' + esc(whenOf(e)) + '</span></div>' +
                     '<div class="item-main">' + esc(e.email || e.phone || (e.uid ? 'uid ' + e.uid : 'No account')) + (e.staff ? ' <span class="tag">staff</span>' : '') + '</div>' +
                     (meta ? '<div class="item-meta">' + esc(meta) + '</div>' : '') +
                     (d ? '<div class="item-detail">' + esc(d) + '</div>' : '') + '</li>';
@@ -344,7 +350,7 @@
                 const summary = c.action === 'deleted' ? fmt(c.n || 0) + ' values removed'
                     : fields.slice(0, 3).map(f => f.f + ': ' + short(f.b) + ' → ' + short(f.a)).join('; ') + (fields.length > 3 ? '; +' + (fields.length - 3) + ' more' : '');
                 return '<li class="item">' +
-                    '<div class="item-top"><span>' + pill(c.action, tone[c.action]) + ' <strong>' + esc(c.area) + '</strong></span><span class="time">' + esc(when(c.at)) + '</span></div>' +
+                    '<div class="item-top"><span>' + pill(c.action, tone[c.action]) + ' <strong>' + esc(c.area) + '</strong></span><span class="time">' + esc(whenOf(c)) + '</span></div>' +
                     '<div class="item-main">' + esc(who(c.by)) + (c.by && c.by.type === 'unauthenticated' ? ' ' + pill('not signed in', 'bad') : '') + '</div>' +
                     '<div class="item-meta mono">' + esc(c.path) + '</div>' +
                     (summary ? '<div class="item-detail">' + esc(summary) + '</div>' : '') +
