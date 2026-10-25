@@ -1,0 +1,12 @@
+{
+  "appId": "com.eandc.usage",
+  "appName": "E&C Usage",
+  "webDir": "www",
+  "backgroundColor": "#0A0A09",
+  "plugins": {
+    "SystemBars": {
+      "style": "DARK",
+      "initialViewportFitValueHint": "cover"
+    }
+  }
+}

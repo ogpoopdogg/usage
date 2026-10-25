@@ -1,8 +1,10 @@
 // E&C usage page – Security section.
 // Reads security_log, which the audit functions (functions/index.js) write: sign-in activity,
-// accounts, database changes and alerts. The database rules let only the admin read it, and the
-// only thing this page writes is acks/{alertId} (an alert marked as seen).
-// Uses $, esc, fmt, db and ADMIN_EMAIL from index.html.
+// accounts, database changes and alerts. The database rules let only the admin read it. This page
+// writes acks/{alertId} (an alert marked as seen), notify (which alerts send a phone notification),
+// push_test (the test button) and, in the Android app, push_tokens (index.html, setupPush).
+// Uses $, esc, fmt, tile, rankList, columnChart, db, TS, ecPush and ADMIN_EMAIL from index.html,
+// and EC_ALERT_TYPES from functions/alert-types.js.
 
 (function () {
     const LOG = 'security_log';
@@ -29,7 +31,9 @@
     };
 
     let hours = 24;
-    let data = { events: [], changes: [], alerts: [], acks: {}, census: {}, devices: {}, stats: {}, pluto: {}, cut: {} };
+    const AT = window.EC_ALERT_TYPES;
+    const EMPTY = () => ({ events: [], changes: [], alerts: [], acks: {}, census: {}, devices: {}, stats: {}, pluto: {}, notify: null, phones: {}, cut: {} });
+    let data = EMPTY();
     let shown = { events: SHOW_STEP, changes: SHOW_STEP, accounts: SHOW_STEP };
     let started = false;
     let timer = null;
@@ -106,11 +110,11 @@
 
     // auto: a timed refresh, which keeps how many rows are shown and skips while a change is open
     async function load(auto) {
-        if (auto === true && document.querySelector('#sec-changes tr.detail:not([hidden])')) return;
+        if (auto === true && document.querySelector('#sec-changes .change-detail:not([hidden])')) return;
         const since = Date.now() - hours * 3600 * 1000;
         if (auto !== true) status('Loading the last ' + rangeLabel() + '…');
         try {
-            const [events, changes, alerts, acks, census, devices, stats, pluto] = await Promise.all([
+            const [events, changes, alerts, acks, census, devices, stats, pluto, notify, phones] = await Promise.all([
                 readRange('events', since),
                 readRange('changes', since),
                 readRange('alerts', Date.now() - Math.max(hours, 24 * 30) * 3600 * 1000),
@@ -118,14 +122,17 @@
                 db.ref(LOG + '/census').once('value'),
                 db.ref(LOG + '/devices').once('value'),
                 db.ref(LOG + '/stats').orderByKey().limitToLast(31).once('value'),
-                db.ref(LOG + '/ext/plutoscan/census').once('value')
+                db.ref(LOG + '/ext/plutoscan/census').once('value'),
+                db.ref(LOG + '/notify').once('value'),
+                db.ref(LOG + '/push_tokens').once('value')
             ]);
             data = Object.assign(data, { events, changes, alerts, acks: acks.val() || {}, census: census.val() || {},
-                devices: devices.val() || {}, stats: stats.val() || {}, pluto: pluto.val() || {} });
+                devices: devices.val() || {}, stats: stats.val() || {}, pluto: pluto.val() || {},
+                notify: notify.val(), phones: phones.val() || {} });
             if (auto !== true) shown = { events: SHOW_STEP, changes: SHOW_STEP, accounts: SHOW_STEP };
             fillFilters();
             render();
-            status('Updated at ' + new Date().toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' }) +
+            status('Updated ' + new Date().toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' }) +
                 (data.cut.events || data.cut.changes ? '. Only the newest ' + fmt(ROW_LIMIT) + ' entries of each list are shown; pick a shorter range to see the rest.' : ''));
         } catch (err) {
             console.error(err);
@@ -139,6 +146,7 @@
     // ===== RENDER =====
     function render() {
         renderHealth();
+        renderSummary();
         renderTiles();
         renderAlerts();
         renderCharts();
@@ -158,8 +166,8 @@
             return;
         }
         const runs = today ? Object.keys(today).reduce((s, k) => s + (Number(today[k]) || 0), 0) : 0;
-        $('sec-health').innerHTML = '<p class="status">Last entry ' + (last ? esc(ago(last)) + ' (' + esc(when(last)) + ')' : 'not in this range') +
-            '. Watchers ran ' + fmt(runs) + ' times on ' + esc(days[days.length - 1] || 'the last day') + ' (UTC).</p>';
+        $('sec-health').innerHTML = '<p class="status" style="margin:-4px 0 12px">Last entry ' + (last ? esc(ago(last)) : 'not in this range') +
+            ' · watchers ran ' + fmt(runs) + ' times on ' + esc(days[days.length - 1] || 'the last day') + ' (UTC)</p>';
     }
 
     function renderTiles() {
@@ -170,19 +178,16 @@
         const deletes = data.changes.filter(c => c.action === 'deleted').length;
         $('sec-tab-count').textContent = open.length > 999 ? '999+' : String(open.length);
         $('sec-tab-count').hidden = !open.length;
-        const tile = (v, label, tone) => '<div' + (tone ? ' class="' + tone + '"' : '') + '><strong>' + fmt(v) + '</strong>' + esc(label) + '</div>';
         $('sec-tiles').innerHTML =
-            tile(open.length, 'Alerts not seen' + (openHigh ? ' (' + openHigh + ' high)' : ''), openHigh ? 'bad' : '') +
+            tile(open.length, openHigh ? 'Alerts not seen (' + openHigh + ' high)' : 'Alerts not seen', openHigh ? 'bad' : open.length ? 'warn' : '') +
             tile(n('signin'), 'Sign-ins') +
             tile(n('signin_failed'), 'Failed sign-ins', n('signin_failed') ? 'warn' : '') +
             tile(n('signin_refused'), 'Refused accounts', n('signin_refused') ? 'warn' : '') +
             tile(n('user_created') + n('signup'), 'New accounts') +
-            tile(data.changes.length, 'Database changes') +
-            tile(deletes, 'Deletes') +
+            tile(data.changes.length, 'Database changes' + (deletes ? ' (' + fmt(deletes) + ' deletes)' : '')) +
             (Object.keys(data.pluto).length || n('purchase') || n('course_denied')
                 ? tile(n('purchase'), 'PlutoScan purchases') +
-                  tile(n('course_denied'), 'Turned away from the course', n('course_denied') ? 'warn' : '') +
-                  tile(Object.values(data.pluto).filter(a => a && a.paid).length, 'PlutoScan paid accounts (of ' + fmt(Object.keys(data.pluto).length) + ')')
+                  tile(Object.values(data.pluto).filter(a => a && a.paid).length, 'PlutoScan paid (of ' + fmt(Object.keys(data.pluto).length) + ')')
                 : '');
     }
 
@@ -197,11 +202,10 @@
         const tone = { high: 'bad', medium: 'warn', low: 'info' };
         $('sec-alerts').innerHTML = rows.slice(0, 300).map(a =>
             '<div class="alert' + (data.acks[a.id] ? ' seen' : '') + '">' +
-                pill(a.level || 'low', tone[a.level] || 'info') +
-                '<div class="alert-body"><strong>' + esc(a.title) + '</strong><span>' + esc(a.detail) + '</span>' +
-                '<small>' + esc(when(a.at)) + ' · ' + esc(a.src || '') + '</small></div>' +
+                '<div class="alert-body">' + pill(a.level || 'low', tone[a.level] || 'info') + '<strong>' + esc(a.title) + '</strong><span>' + esc(a.detail) + '</span>' +
+                '<small>' + esc(when(a.at)) + ' · ' + esc(AT.TYPES[AT.typeOf(a)].label) + (AT.wantsPush(a, data.notify) ? '' : ' · no notification') + '</small></div>' +
                 (data.acks[a.id] ? '<span class="seen-mark">Seen</span>'
-                    : '<button class="btn-ghost" type="button" data-ack="' + esc(a.id) + '">Mark seen</button>') +
+                    : '<button class="btn-ghost small" type="button" data-ack="' + esc(a.id) + '">Seen</button>') +
             '</div>').join('') +
             (rows.length > 300 ? '<div class="empty">' + fmt(rows.length - 300) + ' older alerts not shown.</div>' : '');
     }
@@ -221,7 +225,7 @@
     }
 
     function renderCharts() {
-        // Sign-in activity: buckets of an hour for 24 hours, a day otherwise
+        // Sign-ins: buckets of an hour for 24 hours, a day otherwise. Two series: worked, and failed or refused.
         const step = hours <= 24 ? 3600 * 1000 : 24 * 3600 * 1000;
         const end = Date.now();
         const start = end - hours * 3600 * 1000;
@@ -231,43 +235,32 @@
             const d = new Date(start + (i + 1) * step);
             labels.push(step < 86400000 ? d.toLocaleTimeString('en-CA', { hour: 'numeric' }) : d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }));
         }
-        const series = { signin: 'Signed in', signin_failed: 'Failed', signin_refused: 'Refused' };
-        const colors = { signin: '#3DDC97', signin_failed: '#FF6B5B', signin_refused: '#FF8A3D' };
-        const counts = {};
-        Object.keys(series).forEach(t => { counts[t] = new Array(slots).fill(0); });
+        const okN = new Array(slots).fill(0), badN = new Array(slots).fill(0);
         data.events.forEach(e => {
-            if (!counts[e.type]) return;
-            const i = Math.min(slots - 1, Math.max(0, Math.floor((e.at - start) / step)));
-            counts[e.type][i]++;
+            const into = e.type === 'signin' ? okN : e.type === 'signin_failed' || e.type === 'signin_refused' ? badN : null;
+            if (into) into[Math.min(slots - 1, Math.max(0, Math.floor((e.at - start) / step)))]++;
         });
-        drawChart('sec-signins-chart', labels, Object.keys(series).map(t => ({
-            label: series[t], data: counts[t], backgroundColor: colors[t], borderWidth: 0, borderRadius: 2, maxBarThickness: 40
-        })), false);
+        columnChart('sec-signins-chart', labels, [
+            { label: 'Signed in', data: okN, color: '#3DDC97' },
+            { label: 'Failed or refused', data: badN, color: '#FF6B5B' }
+        ], charts);
 
-        // Changes by area, split by action
-        const areas = count(data.changes, c => c.area).map(x => x[0]);
-        const actions = { created: '#3DDC97', updated: '#4FA3FF', deleted: '#FF6B5B' };
-        $('sec-areas-box').style.height = Math.max(160, areas.length * 32 + 90) + 'px';
-        drawChart('sec-areas-chart', areas, Object.keys(actions).map(a => ({
-            label: a[0].toUpperCase() + a.slice(1), backgroundColor: actions[a], borderWidth: 0, borderRadius: 2, maxBarThickness: 26,
-            data: areas.map(ar => data.changes.filter(c => c.area === ar && c.action === a).length)
-        })), true);
-    }
-    function drawChart(id, labels, datasets, horizontal) {
-        if (charts[id]) charts[id].destroy();
-        const options = baseOptions(horizontal);
-        charts[id] = new Chart($(id), { type: 'bar', data: { labels, datasets }, options });
+        // Changes by area, most changed first
+        const areas = count(data.changes, c => c.area);
+        $('sec-areas').innerHTML = rankList(areas.map(([area, n]) => {
+            const of = data.changes.filter(c => c.area === area);
+            const by = act => of.filter(c => c.action === act).length;
+            const parts = [['created', by('created')], ['updated', by('updated')], ['deleted', by('deleted')]].filter(p => p[1]);
+            return { name: area, value: n, sub: parts.map(p => (p[0] === 'deleted' ? '<span class="e">' : '<span>') + fmt(p[1]) + ' ' + p[0] + '</span>').join(' · ') };
+        }), 'No database changes in this range.', 12);
     }
 
     function renderTop() {
         const failed = data.events.filter(e => e.type === 'signin_failed' || e.type === 'signin_refused');
-        const table = (rows, head) => rows.length
-            ? '<table><thead><tr><th scope="col">' + esc(head) + '</th><th scope="col">Count</th></tr></thead><tbody>' +
-                rows.slice(0, 10).map(r => '<tr><td>' + esc(r[0]) + '</td><td>' + fmt(r[1]) + '</td></tr>').join('') + '</tbody></table>'
-            : '<div class="empty" style="padding:14px">None in this range.</div>';
-        $('sec-top-email').innerHTML = table(count(failed, e => e.email || '(no email)'), 'Email');
-        $('sec-top-ip').innerHTML = table(count(failed, e => e.ip), 'IP address');
-        $('sec-top-writers').innerHTML = table(count(data.changes, c => who(c.by)), 'Changed by');
+        const ranks = (rows, bad) => rows.map(r => ({ name: r[0], value: r[1], bad }));
+        $('sec-top-email').innerHTML = rankList(ranks(count(failed, e => e.email || '(no email)'), true), 'None in this range.', 10);
+        $('sec-top-ip').innerHTML = rankList(ranks(count(failed, e => e.ip), true), 'None in this range.', 10);
+        $('sec-top-writers').innerHTML = rankList(ranks(count(data.changes, c => who(c.by)), false), 'None in this range.', 10);
     }
 
     // ----- sign-in activity -----
@@ -294,7 +287,7 @@
             (type === 'all' ? e.type !== 'visit' : type === 'problems' ? !e.ok : e.type === type) &&
             (app === 'all' || e.app === app) &&
             (!q || [e.email, e.claimedEmail, e.ip, e.uid, e.phone, e.code, e.reason, e.ua].some(v => matches(v, q))));
-        if (!rows.length) { $('sec-events').innerHTML = '<div class="empty" style="padding:20px">No sign-in activity matches.</div>'; return; }
+        if (!rows.length) { $('sec-events').innerHTML = '<div class="empty">No sign-in activity matches.</div>'; return; }
         const detail = e => {
             const bits = [];
             if (e.code) bits.push(e.code);
@@ -315,17 +308,17 @@
             return bits.join(' · ');
         };
         const tone = e => ((e.type === 'signup' || e.type === 'checkout' || e.type === 'purchase') && e.ok === false ? 'bad' : TYPES[e.type] ? TYPES[e.type].tone : 'muted');
-        $('sec-events').innerHTML = '<table class="log"><thead><tr><th scope="col">Time</th><th scope="col">What</th><th scope="col">Account</th>' +
-            '<th scope="col">App</th><th scope="col">IP address</th><th scope="col">Device</th><th scope="col">Details</th></tr></thead><tbody>' +
-            rows.slice(0, shown.events).map(e => '<tr>' +
-                '<td>' + esc(when(e.at)) + '</td>' +
-                '<td>' + pill(e.type === 'signup' && e.ok === false ? 'Sign-up blocked' : typeLabel(e.type), tone(e)) + '</td>' +
-                '<td>' + esc(e.email || e.phone || (e.uid ? 'uid ' + e.uid : '')) + (e.staff ? ' <span class="tag">staff</span>' : '') + '</td>' +
-                '<td>' + esc(e.app || '') + '</td>' +
-                '<td>' + esc(e.ip || '') + '</td>' +
-                '<td title="' + esc(e.ua || '') + '">' + esc(deviceName(e.ua)) + '</td>' +
-                '<td class="wrap">' + esc(detail(e)) + '</td></tr>').join('') +
-            '</tbody></table>' + more('events', rows.length);
+        $('sec-events').innerHTML = '<ul class="items">' +
+            rows.slice(0, shown.events).map(e => {
+                const meta = [e.app, e.ip, deviceName(e.ua)].filter(Boolean).join(' · ');
+                const d = detail(e);
+                return '<li class="item">' +
+                    '<div class="item-top">' + pill(e.type === 'signup' && e.ok === false ? 'Sign-up blocked' : typeLabel(e.type), tone(e)) +
+                        '<span class="time">' + esc(when(e.at)) + '</span></div>' +
+                    '<div class="item-main">' + esc(e.email || e.phone || (e.uid ? 'uid ' + e.uid : 'No account')) + (e.staff ? ' <span class="tag">staff</span>' : '') + '</div>' +
+                    (meta ? '<div class="item-meta">' + esc(meta) + '</div>' : '') +
+                    (d ? '<div class="item-detail">' + esc(d) + '</div>' : '') + '</li>';
+            }).join('') + '</ul>' + more('events', rows.length);
     }
 
     function more(name, total) {
@@ -343,44 +336,40 @@
             (by === 'all' || (c.by && c.by.type === by)) &&
             (!q || matches(c.path, q) || matches(who(c.by), q) || matches(c.by && c.by.uid, q) ||
                 (c.fields || []).some(f => matches(f.f, q) || matches(f.b, q) || matches(f.a, q))));
-        if (!rows.length) { $('sec-changes').innerHTML = '<div class="empty" style="padding:20px">No database changes match.</div>'; return; }
+        if (!rows.length) { $('sec-changes').innerHTML = '<div class="empty">No database changes match.</div>'; return; }
         const tone = { created: 'ok', updated: 'info', deleted: 'bad' };
-        $('sec-changes').innerHTML = '<table class="log"><thead><tr><th scope="col">Time</th><th scope="col">Area</th><th scope="col">Action</th>' +
-            '<th scope="col">Record</th><th scope="col">Changed by</th><th scope="col">What changed</th><th scope="col"></th></tr></thead><tbody>' +
+        $('sec-changes').innerHTML = '<ul class="items">' +
             rows.slice(0, shown.changes).map(c => {
                 const fields = c.fields || [];
                 const summary = c.action === 'deleted' ? fmt(c.n || 0) + ' values removed'
                     : fields.slice(0, 3).map(f => f.f + ': ' + short(f.b) + ' → ' + short(f.a)).join('; ') + (fields.length > 3 ? '; +' + (fields.length - 3) + ' more' : '');
-                return '<tr>' +
-                    '<td>' + esc(when(c.at)) + '</td>' +
-                    '<td>' + esc(c.area) + '</td>' +
-                    '<td>' + pill(c.action, tone[c.action]) + '</td>' +
-                    '<td class="mono">' + esc(c.path) + '</td>' +
-                    '<td>' + esc(who(c.by)) + (c.by && c.by.type === 'unauthenticated' ? ' ' + pill('!', 'bad') : '') + '</td>' +
-                    '<td class="wrap">' + esc(summary) + '</td>' +
-                    '<td><button class="btn-ghost small" type="button" data-change="' + esc(c.id) + '">Details</button></td></tr>' +
-                    '<tr class="detail" id="chd-' + esc(c.id) + '" hidden><td colspan="7"></td></tr>';
-            }).join('') + '</tbody></table>' + more('changes', rows.length);
+                return '<li class="item">' +
+                    '<div class="item-top"><span>' + pill(c.action, tone[c.action]) + ' <strong>' + esc(c.area) + '</strong></span><span class="time">' + esc(when(c.at)) + '</span></div>' +
+                    '<div class="item-main">' + esc(who(c.by)) + (c.by && c.by.type === 'unauthenticated' ? ' ' + pill('not signed in', 'bad') : '') + '</div>' +
+                    '<div class="item-meta mono">' + esc(c.path) + '</div>' +
+                    (summary ? '<div class="item-detail">' + esc(summary) + '</div>' : '') +
+                    '<div class="item-foot"><button class="btn-ghost small" type="button" data-change="' + esc(c.id) + '" aria-expanded="false">Details</button></div>' +
+                    '<div class="change-detail" id="chd-' + esc(c.id) + '" hidden></div></li>';
+            }).join('') + '</ul>' + more('changes', rows.length);
     }
 
-    function showChange(id) {
-        const row = document.getElementById('chd-' + id);
-        if (!row) return;
-        if (!row.hidden) { row.hidden = true; return; }
+    function showChange(id, btn) {
+        const box = document.getElementById('chd-' + id);
+        if (!box) return;
+        if (!box.hidden) { box.hidden = true; btn.setAttribute('aria-expanded', 'false'); btn.textContent = 'Details'; return; }
         const c = data.changes.find(x => x.id === id);
         const fields = c.fields || [];
         const json = v => (v == null ? '(nothing)' : v._cut ? v.json + '… (cut short)' : JSON.stringify(v, null, 2));
-        row.firstChild.innerHTML =
-            '<div class="change-detail">' +
-            '<p><strong>' + esc(c.area) + '</strong> · ' + esc(c.path) + ' · ' + esc(c.action) + ' ' + esc(when(c.at)) + '<br>' +
-            'By ' + esc(who(c.by)) + (c.by && c.by.uid ? ' (uid ' + esc(c.by.uid) + ')' : '') + ': ' + esc(c.by ? WRITERS[c.by.type] || c.by.type : '') + '</p>' +
-            (fields.length ? '<table><thead><tr><th scope="col">Field</th><th scope="col">Before</th><th scope="col">After</th></tr></thead><tbody>' +
-                fields.map(f => '<tr><td class="mono">' + esc(f.f) + '</td><td class="wrap">' + esc(f.b == null ? '—' : typeof f.b === 'string' ? f.b : JSON.stringify(f.b)) +
-                    '</td><td class="wrap">' + esc(f.a == null ? '—' : typeof f.a === 'string' ? f.a : JSON.stringify(f.a)) + '</td></tr>').join('') +
-                '</tbody></table>' + (fields.length >= 40 ? '<p class="sub">Only the first 40 changed fields are listed.</p>' : '') : '') +
-            '<div class="grid2"><div><h3>Before</h3><pre>' + esc(json(c.before)) + '</pre></div><div><h3>After</h3><pre>' + esc(json(c.after)) + '</pre></div></div>' +
-            '</div>';
-        row.hidden = false;
+        const val = v => (v == null ? '—' : typeof v === 'string' ? v : JSON.stringify(v));
+        box.innerHTML =
+            '<p>By ' + esc(who(c.by)) + (c.by && c.by.uid ? ' (uid ' + esc(c.by.uid) + ')' : '') + ': ' + esc(c.by ? WRITERS[c.by.type] || c.by.type : '') + '</p>' +
+            (fields.length ? '<h3>Changed fields</h3><dl class="fields">' +
+                fields.map(f => '<div><dt>' + esc(f.f) + '</dt><dd>' + (f.b == null ? '' : '<span class="was">' + esc(val(f.b)) + '</span> → ') + esc(val(f.a)) + '</dd></div>').join('') +
+                '</dl>' + (fields.length >= 40 ? '<p class="sub">Only the first 40 changed fields are listed.</p>' : '') : '') +
+            '<h3>Before</h3><pre>' + esc(json(c.before)) + '</pre><h3>After</h3><pre>' + esc(json(c.after)) + '</pre>';
+        box.hidden = false;
+        btn.setAttribute('aria-expanded', 'true');
+        btn.textContent = 'Hide details';
     }
 
     // ----- accounts -----
@@ -390,7 +379,7 @@
         if (kind === 'pluto' || kind === 'pluto_paid' || kind === 'pluto_unpaid') { renderPlutoAccounts(kind, q); return; }
         const uids = Object.keys(data.census);
         if (!uids.length) {
-            $('sec-accounts').innerHTML = '<div class="empty" style="padding:20px">The account list fills in within 30 minutes of the functions being deployed.</div>';
+            $('sec-accounts').innerHTML = '<div class="empty">The account list fills in within 30 minutes of the functions being deployed.</div>';
             return;
         }
         const rows = uids.map(uid => Object.assign({ uid }, data.census[uid]))
@@ -401,30 +390,29 @@
             })
             .sort((a, b) => (Date.parse(b.lastSignIn) || 0) - (Date.parse(a.lastSignIn) || 0));
         const date = s => (s && Date.parse(s) ? when(Date.parse(s)) : '');
-        $('sec-accounts').innerHTML = '<table class="log"><thead><tr><th scope="col">Account</th><th scope="col">Sign-in methods</th>' +
-            '<th scope="col">Created</th><th scope="col">Last sign-in</th><th scope="col">Devices</th><th scope="col">Notes</th></tr></thead><tbody>' +
+        $('sec-accounts').innerHTML = '<p class="status" style="margin:0 0 8px">' + fmt(rows.length) + ' accounts. Latest sign-in first.</p><ul class="items">' +
             rows.slice(0, shown.accounts).map(a => {
                 const devices = Object.values(data.devices[a.uid] || {});
                 const notes = [];
                 if (a.disabled) notes.push(pill('disabled', 'warn'));
                 if (a.claims) notes.push(pill('custom claims: ' + a.claims, 'bad'));
                 if (a.email && !a.verified && /@/.test(a.email)) notes.push(pill('email not verified', 'muted'));
-                return '<tr>' +
-                    '<td>' + esc(a.email || a.phone || a.uid) + (/@ec\.com$/.test(a.email || '') ? ' <span class="tag">staff</span>' : '') +
-                        '<small class="mono">' + esc(a.uid) + '</small></td>' +
-                    '<td>' + esc(a.providers || '') + '</td>' +
-                    '<td>' + esc(date(a.created)) + '</td>' +
-                    '<td>' + esc(date(a.lastSignIn)) + '</td>' +
-                    '<td class="wrap">' + esc(devices.map(d => d.name || deviceName(d.ua)).join(', ')) + '</td>' +
-                    '<td>' + notes.join(' ') + '</td></tr>';
-            }).join('') + '</tbody></table>' + more('accounts', rows.length);
+                return '<li class="item">' +
+                    '<div class="item-top"><span class="item-main" style="margin:0">' + esc(a.email || a.phone || a.uid) +
+                        (/@ec\.com$/.test(a.email || '') ? ' <span class="tag">staff</span>' : '') + '</span>' +
+                        '<span class="time">' + esc(date(a.lastSignIn) || 'never signed in') + '</span></div>' +
+                    '<div class="item-meta">' + esc([a.providers, a.created ? 'created ' + date(a.created) : ''].filter(Boolean).join(' · ')) + '</div>' +
+                    (devices.length ? '<div class="item-detail">' + esc(devices.map(d => d.name || deviceName(d.ua)).join(', ')) + '</div>' : '') +
+                    (notes.length ? '<div class="item-detail">' + notes.join(' ') + '</div>' : '') +
+                    '<div class="item-meta mono">' + esc(a.uid) + '</div></li>';
+            }).join('') + '</ul>' + more('accounts', rows.length);
     }
 
     // PlutoScan accounts (its own Firebase project), from auditPlutoCensus every 30 minutes
     function renderPlutoAccounts(kind, q) {
         const uids = Object.keys(data.pluto);
         if (!uids.length) {
-            $('sec-accounts').innerHTML = '<div class="empty" style="padding:20px">The PlutoScan account list fills in within 30 minutes of its functions being deployed (see plutoscan-audit/README.md).</div>';
+            $('sec-accounts').innerHTML = '<div class="empty">The PlutoScan account list fills in within 30 minutes of its functions being deployed (see plutoscan-audit/README.md).</div>';
             return;
         }
         const rows = uids.map(uid => Object.assign({ uid }, data.pluto[uid]))
@@ -433,22 +421,134 @@
             .sort((a, b) => (Date.parse(b.created) || 0) - (Date.parse(a.created) || 0));
         const date = s => (s && Date.parse(s) ? when(Date.parse(s)) : '');
         const paid = uids.filter(u => data.pluto[u] && data.pluto[u].paid).length;
-        $('sec-accounts').innerHTML = '<p class="status" style="padding:0 0 8px">' + fmt(uids.length) + ' PlutoScan accounts, ' + fmt(paid) + ' paid. Newest first.</p>' +
-            '<table class="log"><thead><tr><th scope="col">Account</th><th scope="col">Paid</th><th scope="col">Sign-in methods</th>' +
-            '<th scope="col">Created</th><th scope="col">Last sign-in</th><th scope="col">Notes</th></tr></thead><tbody>' +
+        $('sec-accounts').innerHTML = '<p class="status" style="margin:0 0 8px">' + fmt(uids.length) + ' PlutoScan accounts, ' + fmt(paid) + ' paid. Newest first.</p><ul class="items">' +
             rows.slice(0, shown.accounts).map(a => {
                 const notes = [];
                 if (a.disabled) notes.push(pill('disabled', 'warn'));
                 if (a.claims) notes.push(pill('custom claims: ' + a.claims, 'bad'));
                 if (a.email && !a.verified) notes.push(pill('email not verified', 'muted'));
-                return '<tr>' +
-                    '<td>' + esc(a.email || a.uid) + '<small class="mono">' + esc(a.uid) + '</small></td>' +
-                    '<td>' + (a.paid ? pill('paid', 'ok') : pill('not paid', 'muted')) + '</td>' +
-                    '<td>' + esc(a.providers || '') + '</td>' +
-                    '<td>' + esc(date(a.created)) + '</td>' +
-                    '<td>' + esc(date(a.lastSignIn)) + '</td>' +
-                    '<td>' + notes.join(' ') + '</td></tr>';
-            }).join('') + '</tbody></table>' + more('accounts', rows.length);
+                return '<li class="item">' +
+                    '<div class="item-top"><span class="item-main" style="margin:0">' + esc(a.email || a.uid) + '</span>' +
+                        (a.paid ? pill('paid', 'ok') : pill('not paid', 'muted')) + '</div>' +
+                    '<div class="item-meta">' + esc([a.providers, a.created ? 'created ' + date(a.created) : '', a.lastSignIn ? 'last sign-in ' + date(a.lastSignIn) : ''].filter(Boolean).join(' · ')) + '</div>' +
+                    (notes.length ? '<div class="item-detail">' + notes.join(' ') + '</div>' : '') +
+                    '<div class="item-meta mono">' + esc(a.uid) + '</div></li>';
+            }).join('') + '</ul>' + more('accounts', rows.length);
+    }
+
+    // ===== ALERTS SETTINGS (which alerts send a phone notification) =====
+    // Saved in security_log/notify as { on, types: { type: bool } }; auditAlertPush reads it for every new alert.
+    function settings() {
+        const n = data.notify || {};
+        const types = {};
+        Object.keys(AT.TYPES).forEach(t => { types[t] = AT.wantsPush({ type: t }, { on: true, types: n.types }); });
+        return { on: n.on !== false, types };
+    }
+    function renderSummary() {
+        const s = settings();
+        const on = Object.values(s.types).filter(Boolean).length;
+        $('sec-alert-summary').textContent = s.on ? on + ' of ' + Object.keys(s.types).length + ' on' : 'notifications off';
+    }
+    function phoneText() {
+        const phones = Object.values(data.phones || {});
+        const list = phones.length ? phones.length + (phones.length === 1 ? ' phone gets' : ' phones get') + ' notifications (' +
+            phones.map(p => p.device || 'Android phone').join(', ') + ').' : '';
+        if (ecPush.native) {
+            const here = { on: 'This phone is set up for notifications.', off: 'Setting up notifications on this phone…',
+                blocked: 'Notifications are turned off for this app. Turn them on in the phone’s Settings > Apps > E&C Usage > Notifications.',
+                error: 'This phone could not sign up for notifications. Close the app and open it again.' }[ecPush.state] || '';
+            return { text: here + (list && ecPush.state === 'on' ? ' ' + list : ''), bad: ecPush.state === 'blocked' || ecPush.state === 'error' };
+        }
+        return { text: (list || 'No phone gets notifications yet.') + ' Notifications go to the E&C Usage Android app: install it and sign in to add a phone.', bad: !phones.length };
+    }
+    function renderSettings() {
+        const s = settings();
+        $('alert-sheet').classList.toggle('off', !s.on);
+        $('notify-on').checked = s.on;
+        $('notify-on-text').textContent = s.on ? 'On for the alerts ticked below' : 'Off: no alert sends a notification';
+        const ph = phoneText();
+        $('notify-phones').textContent = ph.text;
+        $('notify-phones').classList.toggle('bad', ph.bad);
+        $('notify-test').disabled = !Object.keys(data.phones || {}).length;
+        const tone = { high: 'bad', medium: 'warn', low: 'info' };
+        $('notify-types').innerHTML = Object.keys(AT.GROUPS).map(g =>
+            '<fieldset><legend>' + esc(AT.GROUPS[g]) + '</legend>' +
+            Object.keys(AT.TYPES).filter(t => AT.TYPES[t].group === g).map(t => {
+                const T = AT.TYPES[t];
+                return '<label class="check-row"><input type="checkbox" data-type="' + esc(t) + '"' + (s.types[t] ? ' checked' : '') + (s.on ? '' : ' disabled') + '>' +
+                    '<span class="txt">' + esc(T.label) + (T.help ? '<small>' + esc(T.help) + '</small>' : '') + '</span>' +
+                    pill(T.level, tone[T.level]) + '</label>';
+            }).join('') + '</fieldset>').join('');
+        renderSummary();
+    }
+    function saveSettings(next) {
+        const was = data.notify;
+        data.notify = next;
+        renderSettings();
+        renderAlerts();
+        $('notify-saved').classList.remove('error');
+        $('notify-saved').textContent = 'Saving…';
+        db.ref(LOG + '/notify').set(next).then(() => {
+            $('notify-saved').textContent = 'Saved. New alerts follow these settings right away.';
+        }).catch(err => {
+            console.error(err);
+            data.notify = was;
+            renderSettings();
+            renderAlerts();
+            $('notify-saved').classList.add('error');
+            $('notify-saved').textContent = err && err.code === 'PERMISSION_DENIED'
+                ? 'The database refused the change. The security_log rules need the notify part (see security_log.rules.json).'
+                : 'Could not save: ' + (err && err.message ? err.message : err);
+        });
+    }
+    async function openSettings() {
+        $('notify-saved').textContent = '';
+        $('notify-test-msg').textContent = '';
+        renderSettings();
+        $('alert-sheet').showModal();
+        try {
+            // Fresh copies: a phone may have been added since the last load
+            const [notify, phones] = await Promise.all([db.ref(LOG + '/notify').once('value'), db.ref(LOG + '/push_tokens').once('value')]);
+            data.notify = notify.val();
+            data.phones = phones.val() || {};
+            renderSettings();
+        } catch (e) { /* the copies from the last load stay */ }
+    }
+    function sendTest() {
+        const btn = $('notify-test'), msg = $('notify-test-msg');
+        const asked = Date.now() - 60 * 1000; // allows for the phone's clock being a little off
+        btn.disabled = true;
+        msg.textContent = 'Sending…';
+        const ref = db.ref(LOG + '/push_result');
+        let done = false;
+        const finish = text => { if (done) return; done = true; ref.off('value', onResult); clearTimeout(t); msg.textContent = text; btn.disabled = false; };
+        const onResult = snap => {
+            const r = snap.val();
+            if (r && r.at > asked) finish(r.sent ? 'Sent to ' + r.sent + (r.sent === 1 ? ' phone.' : ' phones.') : 'No phone took it. Open the app on the phone and sign in again.');
+        };
+        const t = setTimeout(() => finish('No answer from the server. Check that the functions are deployed (README).'), 25000);
+        db.ref(LOG + '/push_test').set(TS).then(() => ref.on('value', onResult)).catch(err => finish('Could not send: ' + (err && err.message ? err.message : err)));
+    }
+    function wireSettings() {
+        $('sec-alert-settings').addEventListener('click', openSettings);
+        $('alert-sheet-close').addEventListener('click', () => $('alert-sheet').close());
+        $('notify-on').addEventListener('change', e => saveSettings(Object.assign(settings(), { on: e.target.checked })));
+        $('notify-types').addEventListener('change', e => {
+            const box = e.target.closest('[data-type]'); if (!box) return;
+            const s = settings();
+            s.types[box.dataset.type] = box.checked;
+            saveSettings(s);
+        });
+        document.querySelector('#alert-sheet .quick').addEventListener('click', e => {
+            const b = e.target.closest('[data-preset]'); if (!b) return;
+            const p = b.dataset.preset;
+            const types = {};
+            Object.keys(AT.TYPES).forEach(t => {
+                types[t] = p === 'all' ? true : p === 'none' ? false : p === 'high' ? AT.TYPES[t].level === 'high' : AT.TYPES[t].on;
+            });
+            saveSettings({ on: true, types });
+        });
+        $('notify-test').addEventListener('click', sendTest);
     }
 
     // ===== CONTROLS =====
@@ -469,7 +569,8 @@
         $('sec-ch-q').addEventListener('input', () => { shown.changes = SHOW_STEP; renderChanges(); });
         $('sec-acc-kind').addEventListener('change', () => { shown.accounts = SHOW_STEP; renderAccounts(); });
         $('sec-acc-q').addEventListener('input', () => { shown.accounts = SHOW_STEP; renderAccounts(); });
-        $('sec-changes').addEventListener('click', e => { const b = e.target.closest('[data-change]'); if (b) showChange(b.dataset.change); });
+        $('sec-changes').addEventListener('click', e => { const b = e.target.closest('[data-change]'); if (b) showChange(b.dataset.change, b); });
+        wireSettings();
         $('view-security').addEventListener('click', e => {
             const b = e.target.closest('[data-more]'); if (!b) return;
             shown[b.dataset.more] += SHOW_STEP;
@@ -486,9 +587,12 @@
             timer = setInterval(() => { if (!document.hidden) load(true); }, AUTO_REFRESH);
         },
         hide() { clearInterval(timer); timer = null; },
+        refreshSettings() { if ($('alert-sheet').open) renderSettings(); },
+        refreshIfShown() { if (started && !$('view-security').hidden) load(true); },
         reset() {
             clearInterval(timer); timer = null;
-            data = { events: [], changes: [], alerts: [], acks: {}, census: {}, devices: {}, stats: {}, pluto: {}, cut: {} };
+            data = EMPTY();
+            if ($('alert-sheet').open) $('alert-sheet').close();
         }
     };
 })();

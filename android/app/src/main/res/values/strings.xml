@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">E&amp;C Usage</string>
+    <string name="title_activity_main">E&amp;C Usage</string>
+    <string name="package_name">com.eandc.usage</string>
+    <string name="custom_url_scheme">com.eandc.usage</string>
+</resources>

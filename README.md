@@ -1,8 +1,8 @@
 # E&C Usage and Security
 
-Admin page for E&C Courier, open only to justin@ec.com. It has two tabs:
+Admin page for E&C Courier, open only to justin@ec.com. It is laid out for a phone first (nothing scrolls sideways) and also comes as an Android app that sends security alerts as phone notifications (see [Android app](#android-app)). It has two tabs:
 
-- **Google API usage**: the Google Maps requests each person triggered in Route Planner and Route Watcher (from `developer/api_usage`).
+- **API usage**: the Google Maps requests each person triggered in Route Planner and Route Watcher (from `developer/api_usage`).
 - **Security**: sign-ins, failed and refused sign-ins, accounts, every change to the watched parts of the database, and alerts. It reads `security_log`, which the server code in `functions/` writes.
 
 Open the Security tab directly with `#security` at the end of the address.
@@ -13,7 +13,7 @@ PlutoScan (its own Firebase project, `plutoscan`) has its own audit functions in
 
 | Part | What's in it | Where it comes from |
 | --- | --- | --- |
-| Alerts | Things worth a look, with a button to mark each as seen | All the functions below |
+| Alerts | Things worth a look, with a button to mark each as seen. The **Alerts** button at the top picks which kinds send a phone notification | All the functions below |
 | Sign-in activity | Every sign-in (with IP address, browser, sign-in method), failed sign-ins, accounts an app turned away, new and deleted accounts, account changes, reset emails, SMS codes | `auditBeforeSignIn`, `auditSignInReport`, `auditUserCreated`, `auditUserDeleted`, `auditUserCensus`, `auditBeforeEmail`, `auditBeforeSms`, and the time clock's `timeclockBeforeUserCreated` (sign-ups) |
 | Database changes | Who changed what, when, the fields that changed, and the full record before and after | One watcher per area (list below) |
 | Accounts | Every Firebase sign-in account, its sign-in methods, last sign-in and the devices it has used | `auditUserCensus` (every 30 minutes) and `auditBeforeSignIn` |
@@ -39,6 +39,10 @@ PlutoScan (its own Firebase project, `plutoscan`) has its own audit functions in
 | One IP sending more than 60 reports in 10 minutes (the rest are dropped) | medium |
 | 5 requests to `auditIngest` with a wrong key from one IP in 10 minutes | high |
 
+Every alert has a kind (`type`), listed in `functions/alert-types.js`; the page and the server both read that file. In the Security tab, **Alerts** opens a list of every kind with a tick box, plus one switch for all phone notifications. Ticked kinds send a notification to the Android app (`auditAlertPush`); unticked ones still show in the tab. The ticks are saved in `security_log/notify`, so they apply to every phone. Until they are first saved, high and medium kinds notify and low ones (new device, PlutoScan purchase) don't. **Send a test notification** in the same list checks a phone end to end.
+
+PlutoScan alerts get their kind from `plutoscan-audit`. Until that codebase is deployed again (see `plutoscan-audit/README.md`), its alerts arrive without one and count as "Any other PlutoScan alert".
+
 ### Watched parts of the database
 
 Address lookup, staff, roles, jobs, pickup requests, companies, join codes, customer profiles, dispatch phones (`push_tokens`), RouteWatcher allowed users, settings, driver nicknames and sign-in locks, route planner (except `ui_prefs` and `notification_reads`), time clock employees, settings, punches, punch fix requests, van reports, vans, oil plan and van picks, and Garage (except its own `history`). The list is `WATCHES` in `functions/lib.js`.
@@ -57,7 +61,7 @@ Left out on purpose, because they change many times a minute and would cost more
 
 Run these in Google Cloud Shell (https://shell.cloud.google.com), signed in as an owner of the `eandccourier-36fcc` project.
 
-1. **Database rules.** Add the `security_log` block from `security_log.rules.json` to the database rules, next to the other top-level keys, and publish. Only justin@ec.com can read the log; nobody can write it except the server code, apart from marking alerts as seen.
+1. **Database rules.** Add the `security_log` block from `security_log.rules.json` to the database rules, next to the other top-level keys, and publish (if a `security_log` block is already there, replace that block only). Only justin@ec.com can read the log; nobody can write it except the server code, apart from marking alerts as seen, the alert notification ticks (`notify`), the phones that get them (`push_tokens`) and the test button (`push_test`).
 2. **Check for an existing sign-in function.** In the Firebase console, open Authentication, then Settings, then Blocking functions. A project can have only one "Before sign in" function. If one is already set (and it isn't `auditBeforeSignIn`), stop and ask before deploying, because deploying replaces it. The time clock's `timeclockBeforeUserCreated` is a "Before account creation" function and is not affected.
 3. **Deploy the functions.**
    ```
@@ -70,9 +74,34 @@ Run these in Google Cloud Shell (https://shell.cloud.google.com), signed in as a
 5. **Check the report address.** Open https://us-central1-eandccourier-36fcc.cloudfunctions.net/auditSignInReport in a browser. A blank page means it's live (it only answers the apps' reports); a "not found" error means the deploy didn't finish. The apps already send to this address. Then type a wrong password into any app and refresh the Security tab.
 6. **Check who-changed-what.** Edit something in the address lookup, then look at Database changes. Changed by should show the email of the person who made the change.
 
+## Android app
+
+The `android/` folder wraps `index.html` as an Android app (built with [Capacitor](https://capacitorjs.com), the same way as the Dispatch app) so security alerts arrive as real phone notifications, even when the app is closed. The small status-bar icon is the Dispatch app's crown. The notification uses the phone's normal notification sound.
+
+How a notification gets to the phone: the app saves the phone's Firebase Cloud Messaging token in `security_log/push_tokens` when you sign in. Every new alert runs `auditAlertPush`, which checks the ticks in `security_log/notify` and, if that kind is ticked, sends the alert to every saved phone. Signing out of the app removes that phone.
+
+### One-time setup
+
+1. **Register the app in Firebase.** Firebase console, project `eandccourier-36fcc`, gear icon, Project settings, General, Your apps, **Add app**, Android. Package name **`com.eandc.usage`** (it must match exactly), nickname `E&C Usage`, leave SHA-1 empty. Download **google-services.json**.
+2. **Give the file to the build**, one of two ways: upload it to this repo at `android/app/google-services.json` (on GitHub: open `android/app`, Add file, Upload files; it holds the same kind of public project ID and API key as `index.html`), or keep it out of the repo by adding a repository secret named `GOOGLE_SERVICES_JSON` (Settings, Secrets and variables, Actions) with the whole file as its value.
+3. **Database rules and functions**: steps 1 and 3 of *Setting it up* above. `auditAlertPush` and `auditTestPush` are part of the `audit` codebase, so the usual deploy command adds them.
+4. **(Recommended) Signing key**, so a new build installs over the old one instead of needing an uninstall first. Add four repository secrets to *this* repo: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. If you already made a key for the Dispatch app (see its `APP-SETUP.md`, step 5), the same key and values can be used here; secrets aren't shared between repos, so add them again. Without them, GitHub builds a debug APK.
+
+### Getting it onto the phone
+
+Every push to GitHub builds the app (Actions tab, *Build Android app*). For an easy download on the phone: Actions, *Build Android app*, *Run workflow*, tick **Also publish the APK as a GitHub Release**, *Run workflow*; then open the repo's Releases page on the phone and tap the `.apk`. Android asks to allow installs from the browser; allow it.
+
+On first launch: sign in, tap **Allow** when Android asks about notifications, then Security, **Alerts**, **Send a test notification**. If alerts come late while the phone is idle: phone Settings, Apps, E&C Usage, Battery, **Unrestricted**.
+
+### Changing things later
+
+- Edit `index.html` / `security.js` as before; the website updates as usual, and the next GitHub build puts the change into the APK.
+- Launcher icon and splash screen: `python3 scripts/make-android-assets.py` (from `icon-512.png`).
+- Building on a computer (Node 22 and Android Studio): `npm install && npm run sync && npm run open:android`.
+
 ## Running cost
 
-Each watched change runs one function, so busy areas (time clock punches, jobs) cost the most. The line under the range buttons shows how many times the watchers ran on the latest day, and `security_log/stats` keeps a count per watcher per day. Compare with the Cloud Functions line in the Firebase usage and billing page. Every function is set to 256 MiB of memory to keep each run cheap.
+Phone notifications run one short function per alert (`auditAlertPush`), and sending through Firebase Cloud Messaging is free. Each watched change runs one function, so busy areas (time clock punches, jobs) cost the most. The line under the range buttons shows how many times the watchers ran on the latest day, and `security_log/stats` keeps a count per watcher per day. Compare with the Cloud Functions line in the Firebase usage and billing page. Every function is set to 256 MiB of memory to keep each run cheap.
 
 ## Tests
 
@@ -80,6 +109,6 @@ Each watched change runs one function, so busy areas (time clock punches, jobs) 
 cd functions && npm test
 ```
 
-The tests cover the pure parts in `functions/lib.js`: report checking, sign-in and change entries, field differences, alerts and the account census.
+The tests cover the pure parts in `functions/lib.js` and `functions/alert-types.js`: report checking, sign-in and change entries, field differences, alerts and their kinds, which alerts notify, and the account census.
 
 The functions were also run end to end in the Firebase emulators (auth, database, functions) with the page signed in as the admin: sign-ups, sign-ins, wrong passwords, a refused account, staff edits to the address lookup, a server-side mass delete, alerts, marking alerts seen, and the page on desktop and phone widths. The emulator sends every blocking event to one function, so `auditBeforeEmail` and `auditBeforeSms` were left out of that run.

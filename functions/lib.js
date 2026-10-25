@@ -6,9 +6,14 @@
                         type: signin | signin_failed | signin_refused | signup | user_created |
                               user_deleted | account_changed | email_sent | sms_sent
      changes/{id}     database changes: { at, area, path, action, by, before, after, fields, n }
-     alerts/{id}      things worth looking at now: { at, level, title, detail, src }
-                        level: high | medium | low
-     acks/{alertId}   true once the admin marked an alert as seen (the only part the admin writes)
+     alerts/{id}      things worth looking at now: { at, type, level, title, detail, src }
+                        type: a key of alert-types.js; level: high | medium | low
+     acks/{alertId}   true once the admin marked an alert as seen
+     notify           which kinds of alert send a phone notification: { on, types: { type: bool } }
+     push_tokens/{key}  the admin's phones (the Android app): { token, platform, updated_at }
+     push_result      { at, sent }: how many phones the last test reached (server code writes it)
+     push_test        written by the page's "Send a test notification" button; the function clears it
+                      (notify, push_tokens and push_test are the parts the admin writes, besides acks)
      counters/...     short-lived counts used to spot bursts (failed sign-ins, deletes, reports)
      devices/{uid}/{hash}  devices each account has signed in from: { first, last, ua, ip }
      census/{uid}     the last look at each account, to spot changes made outside the apps
@@ -20,6 +25,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const AT = require('./alert-types');
 
 const ADMIN_EMAILS = ['justin@ec.com', 'desirae@ec.com', 'celeste@ec.com'];
 const TEXT_MAX = 300;
@@ -274,15 +280,15 @@ function changeAlerts(entry, watch, { staff, adminEmail }) {
   const who = entry.by.email || entry.by.uid ||
     (entry.by.type === 'admin' ? 'Server code or the console' : entry.by.type === 'unknown' ? 'Someone (Firebase did not say who)' : entry.by.type);
   if (entry.by.type === 'unauthenticated') {
-    out.push({ level: 'high', title: 'Change with no sign-in', detail: entry.area + ': ' + entry.path + ' was ' + entry.action + ' by someone not signed in. The database rules should never allow this.' });
+    out.push({ type: 'no_signin_change', level: 'high', title: 'Change with no sign-in', detail: entry.area + ': ' + entry.path + ' was ' + entry.action + ' by someone not signed in. The database rules should never allow this.' });
   } else if (watch.staffOnly && entry.by.type === 'app_user' && staff === false && !adminEmail) {
-    out.push({ level: 'high', title: 'Non-staff account changed staff data', detail: who + ' ' + entry.action + ' ' + entry.path + ' without being on the staff list.' });
+    out.push({ type: 'nonstaff_change', level: 'high', title: 'Non-staff account changed staff data', detail: who + ' ' + entry.action + ' ' + entry.path + ' without being on the staff list.' });
   }
   if (watch.level && !watch.quiet) {
-    out.push({ level: watch.level, title: entry.area + ' ' + entry.action, detail: who + ' ' + entry.action + ' ' + entry.path + (entry.fields.length ? ' (' + entry.fields.slice(0, 5).map((f) => f.f).join(', ') + ')' : '') });
+    out.push({ type: watch.level === 'high' ? 'access_change' : 'settings_change', level: watch.level, title: entry.area + ' ' + entry.action, detail: who + ' ' + entry.action + ' ' + entry.path + (entry.fields.length ? ' (' + entry.fields.slice(0, 5).map((f) => f.f).join(', ') + ')' : '') });
   }
   if (entry.action === 'deleted' && entry.n >= 20) {
-    out.push({ level: 'high', title: 'Large delete', detail: who + ' deleted ' + entry.path + ' (' + entry.n + ' values).' });
+    out.push({ type: 'large_delete', level: 'high', title: 'Large delete', detail: who + ' deleted ' + entry.path + ' (' + entry.n + ' values).' });
   }
   return out;
 }
@@ -325,7 +331,7 @@ function censusAlertLevel(diff, email) {
 // ---------------------------------------------------------------- other projects (auditIngest)
 
 /** Firebase projects whose own audit functions forward here. The key is the app name the page shows. */
-const INGEST_APPS = { plutoscan: { label: 'PlutoScan' } };
+const INGEST_APPS = { plutoscan: { label: 'PlutoScan', alertPrefix: 'pluto_' } };
 const INGEST_MAX = 16000;     // largest body another project may send
 const LEVELS = new Set(['high', 'medium', 'low']);
 const UID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -386,6 +392,9 @@ function ingestEntry(text, app, at) {
   }
   if (body.kind === 'alerts') {
     entry.level = LEVELS.has(e.level) ? e.level : 'medium';
+    // Their kinds of alert get the app's prefix (failed_signins -> pluto_failed_signins); unknown ones are 'other'.
+    const prefix = INGEST_APPS[app].alertPrefix;
+    entry.type = AT.TYPES[prefix + e.type] ? prefix + e.type : prefix + 'other';
     entry.title = clip(label + ': ' + (e.title || 'alert'), 200);
     entry.detail = clip(e.detail, 600);
     entry.src = clip(app + (e.src ? '/' + e.src : ''), 60);

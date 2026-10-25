@@ -27,6 +27,12 @@
      what they log here, with a secret key, so it shows in the same Security tab. Its code is
      in ../plutoscan-audit.
 
+   Phone notifications
+   - auditAlertPush: every new alert whose kind is ticked in the Security tab's Alerts settings
+     (security_log/notify, kinds in alert-types.js) goes to the admin's phones through Firebase
+     Cloud Messaging. The phones are the E&C Usage Android app (see ../android and the README).
+   - auditTestPush: the "Send a test notification" button.
+
    Upkeep
    - auditPrune (daily): drops events and changes after 90 days, alerts after a year.
 
@@ -34,7 +40,7 @@
    the time clock's or the dispatch app's functions in the same project. */
 'use strict';
 
-const { onValueWritten } = require('firebase-functions/v2/database');
+const { onValueWritten, onValueCreated } = require('firebase-functions/v2/database');
 const { onRequest } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { defineSecret } = require('firebase-functions/params');
@@ -45,6 +51,7 @@ const admin = require('firebase-admin');
 const { ServerValue } = require('firebase-admin/database');
 const crypto = require('crypto');
 const L = require('./lib');
+const AT = require('./alert-types');
 
 admin.initializeApp();
 
@@ -104,7 +111,7 @@ async function countFailure(entry) {
   if (entry.email) {
     jobs.push(count('failed_email/' + b + '/' + L.safeKey(entry.email)).then((n) => {
       if (n === FAIL_ALERT) {
-        return raise({ level: L.ADMIN_EMAILS.includes(entry.email) || /@ec\.com$/.test(entry.email) ? 'high' : 'medium',
+        return raise({ type: 'failed_signins', level: L.ADMIN_EMAILS.includes(entry.email) || /@ec\.com$/.test(entry.email) ? 'high' : 'medium',
           title: 'Repeated failed sign-ins', detail: n + ' failed sign-ins for ' + entry.email + ' in 15 minutes (latest from ' + (entry.ip || 'unknown IP') + ', ' + entry.app + ').' }, 'signin', entry.at);
       }
     }));
@@ -112,7 +119,7 @@ async function countFailure(entry) {
   if (entry.ip) {
     jobs.push(count('failed_ip/' + b + '/' + L.safeKey(entry.ip)).then((n) => {
       if (n === FAIL_ALERT || n === FAIL_ALERT_IP) {
-        return raise({ level: n >= FAIL_ALERT_IP ? 'high' : 'medium', title: 'Many failed sign-ins from one place',
+        return raise({ type: 'failed_signins', level: n >= FAIL_ALERT_IP ? 'high' : 'medium', title: 'Many failed sign-ins from one place',
           detail: n + ' failed sign-ins from IP ' + entry.ip + ' in 15 minutes (latest for ' + (entry.email || 'no email') + ').' }, 'signin', entry.at);
       }
     }));
@@ -143,7 +150,7 @@ exports.auditSignInReport = onRequest(
       const n = await count('reports/' + L.bucket(at, REPORT_WINDOW) + '/' + L.safeKey(ip));
       if (n > REPORT_LIMIT) {
         if (n === REPORT_LIMIT + 1) {
-          await raise({ level: 'medium', title: 'Too many sign-in reports', detail: 'IP ' + ip + ' sent more than ' + REPORT_LIMIT + ' reports in 10 minutes; the rest are not logged.' }, 'signin', at);
+          await raise({ type: 'report_flood', level: 'medium', title: 'Too many sign-in reports', detail: 'IP ' + ip + ' sent more than ' + REPORT_LIMIT + ' reports in 10 minutes; the rest are not logged.' }, 'signin', at);
         }
         res.status(204).end();
         return;
@@ -164,7 +171,7 @@ exports.auditSignInReport = onRequest(
       await log('events').push(entry);
       if (entry.type === 'signin_failed') await countFailure(entry);
       else if (entry.verified) {
-        await raise({ level: 'medium', title: 'Account refused by ' + entry.app,
+        await raise({ type: 'refused', level: 'medium', title: 'Account refused by ' + entry.app,
           detail: (entry.email || entry.uid) + ' signed in to ' + entry.app + ' but was refused: ' + (entry.reason || entry.code || 'no reason given') + '.' }, 'signin', at);
       }
       await tally('auditSignInReport', at);
@@ -191,7 +198,7 @@ async function logSignIn(event) {
         name: L.deviceName(entry.ua), ua: entry.ua, ip: entry.ip });
       // An account's first device isn't news; another one for a staff account might be.
       if (!known && snap.exists() && entry.staff) {
-        return Promise.all([write, raise({ level: 'low', title: 'New device for ' + entry.email,
+        return Promise.all([write, raise({ type: 'new_device', level: 'low', title: 'New device for ' + entry.email,
           detail: entry.email + ' signed in from ' + L.deviceName(entry.ua) + ' for the first time (IP ' + (entry.ip || 'unknown') + ').' }, 'signin', at)]);
       }
       return write;
@@ -239,7 +246,7 @@ exports.auditUserCreated = functionsV1.region(REGION).runWith({ memory: '256MB' 
   await Promise.all([
     log('events').push(Object.assign({ at, type: 'user_created', ok: true, staff }, s)),
     log('census/' + u.uid).set(L.censusOf(u)),
-    staff ? raise({ level: 'medium', title: 'New staff account', detail: s.email + ' was created (' + (s.provider || 'no sign-in method') + ').' }, 'accounts', at) : null,
+    staff ? raise({ type: 'new_staff', level: 'medium', title: 'New staff account', detail: s.email + ' was created (' + (s.provider || 'no sign-in method') + ').' }, 'accounts', at) : null,
     tally('auditUserCreated', at)
   ]);
 });
@@ -252,7 +259,7 @@ exports.auditUserDeleted = functionsV1.region(REGION).runWith({ memory: '256MB' 
     log('events').push(Object.assign({ at, type: 'user_deleted', ok: true, staff }, s)),
     log('census/' + u.uid).remove(),
     log('devices/' + u.uid).remove(),
-    raise({ level: staff ? 'high' : 'low', title: 'Account deleted', detail: (s.email || s.phone || s.uid) + ' was deleted.' }, 'accounts', at),
+    raise({ type: 'account_deleted', level: staff ? 'high' : 'low', title: 'Account deleted', detail: (s.email || s.phone || s.uid) + ' was deleted.' }, 'accounts', at),
     tally('auditUserDeleted', at)
   ]);
 });
@@ -279,7 +286,7 @@ exports.auditUserCensus = onSchedule({ schedule: 'every 30 minutes', region: REG
         changes: diff, staff: /@ec\.com$/.test(now.email || was.email || '') }));
       const level = L.censusAlertLevel(diff, now.email || was.email);
       if (level) {
-        jobs.push(raise({ level, title: 'Account changed: ' + (now.email || was.email || u.uid),
+        jobs.push(raise({ type: 'account_changed', level, title: 'Account changed: ' + (now.email || was.email || u.uid),
           detail: diff.map((d) => d.label + ': ' + (d.b == null ? 'none' : d.b) + ' → ' + (d.a == null ? 'none' : d.a)).join('; ') }, 'census', at));
       }
     }
@@ -339,7 +346,7 @@ function watcher(watch) {
       // Per account; changes with no account (server code, the console) are counted together
       jobs.push(count('deletes/' + L.bucket(at, DELETE_WINDOW) + '/' + L.safeKey(entry.by.uid || entry.by.type)).then((n) => {
         if (n === DELETE_ALERT) {
-          return raise({ level: 'high', title: 'Many deletes in a few minutes',
+          return raise({ type: 'many_deletes', level: 'high', title: 'Many deletes in a few minutes',
             detail: (entry.by.email || entry.by.uid || (entry.by.type === 'admin' ? 'Server code or the console' : 'An unknown writer')) + ' deleted ' + n + ' records within 5 minutes (latest: ' + entry.path + ').' }, watch.name, at);
         }
       }));
@@ -374,7 +381,7 @@ exports.auditIngest = onRequest(
       const ip = L.requestIp(req);
       const n = await count('ingest_refused/' + L.bucket(at, REPORT_WINDOW) + '/' + L.safeKey(ip)).catch(() => 0);
       if (n === 5) {
-        await raise({ level: 'high', title: 'Wrong key sent to auditIngest', detail: 'IP ' + ip + ' sent ' + n + ' requests with a wrong or missing key in 10 minutes (app: ' + L.clip(app || 'none', 30) + ').' }, 'ingest', at).catch(() => {});
+        await raise({ type: 'ingest_key', level: 'high', title: 'Wrong key sent to auditIngest', detail: 'IP ' + ip + ' sent ' + n + ' requests with a wrong or missing key in 10 minutes (app: ' + L.clip(app || 'none', 30) + ').' }, 'ingest', at).catch(() => {});
       }
       res.status(403).end();
       return;
@@ -393,6 +400,62 @@ exports.auditIngest = onRequest(
     }
   }
 );
+
+// ---------------------------------------------------------------- phone notifications
+
+// Must match ALERT_CHANNEL in index.html (the app makes the channel when it starts)
+const PUSH_CHANNEL = 'security_alerts';
+// Tokens FCM reports as gone for good (app uninstalled, data cleared, token replaced)
+const DEAD_TOKEN_CODES = new Set(['messaging/registration-token-not-registered', 'messaging/invalid-registration-token']);
+const LEVEL_NAMES = { high: 'High', medium: 'Medium', low: 'Low' };
+
+/** Sends one notification to every phone in security_log/push_tokens. Returns how many got it. */
+async function pushToPhones({ title, body, tag, data }) {
+  const snap = await log('push_tokens').once('value');
+  const phones = [];
+  snap.forEach((c) => { const token = c.child('token').val(); if (typeof token === 'string' && token) phones.push({ key: c.key, token }); });
+  if (!phones.length) { logger.info('No phones registered for security alerts'); return 0; }
+  const res = await admin.messaging().sendEachForMulticast({
+    tokens: phones.map((p) => p.token),
+    notification: { title: L.clip(title, 120), body: L.clip(body, 400) },
+    data,
+    android: {
+      priority: 'high',  // shown right away, even when the phone is dozing
+      notification: { channelId: PUSH_CHANNEL, icon: 'ic_stat_usage', color: '#E8E400', tag, defaultSound: true }
+    }
+  });
+  const dead = {};
+  res.responses.forEach((r, i) => {
+    if (r.success) return;
+    const code = r.error && r.error.code;
+    if (DEAD_TOKEN_CODES.has(code)) dead[phones[i].key] = null;
+    else logger.warn('Push failed', { code, message: r.error && r.error.message });
+  });
+  if (Object.keys(dead).length) await log('push_tokens').update(dead);
+  return res.successCount;
+}
+
+exports.auditAlertPush = onValueCreated({ ref: '/' + LOG + '/alerts/{id}', region: REGION, memory: MEMORY, maxInstances: 5 }, async (event) => {
+  const alert = event.data.val() || {};
+  const notify = (await log('notify').once('value')).val();
+  if (!AT.wantsPush(alert, notify)) return;
+  const at = Date.now();
+  await pushToPhones({
+    title: (LEVEL_NAMES[alert.level] ? LEVEL_NAMES[alert.level] + ': ' : '') + (alert.title || 'Security alert'),
+    body: alert.detail || '',
+    tag: 'alert-' + event.params.id,
+    data: { alertId: String(event.params.id), type: AT.typeOf(alert) }
+  });
+  await tally('auditAlertPush', at);
+});
+
+// "Send a test notification" in the Alerts settings writes push_test
+exports.auditTestPush = onValueWritten({ ref: '/' + LOG + '/push_test', region: REGION, memory: MEMORY, maxInstances: 2 }, async (event) => {
+  if (!event.data.after.exists()) return;
+  const at = Date.now();
+  const sent = await pushToPhones({ title: 'Test notification', body: 'Security alerts will show up like this.', tag: 'test', data: { type: 'test' } });
+  await Promise.all([log('push_test').set(null), log('push_result').set({ at, sent }), tally('auditTestPush', at)]);
+});
 
 // ---------------------------------------------------------------- upkeep
 
