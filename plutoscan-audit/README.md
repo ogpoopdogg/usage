@@ -46,10 +46,10 @@ It is its own codebase (`audit` in `firebase.json`), so deploying it never touch
 Run these in Google Cloud Shell (https://shell.cloud.google.com), signed in as an owner of both `plutoscan` and `eandccourier-36fcc`.
 
 1. **Identity Platform on plutoscan.** The sign-up, sign-in and email functions need it, the same as E&C. In the Firebase console for plutoscan, open Authentication, then Settings, and upgrade to Firebase Authentication with Identity Platform if it offers that. Its prices are at https://cloud.google.com/identity-platform/pricing (there is a free tier).
-2. **One shared key, stored in both projects.** It never needs to be typed anywhere else.
+2. **One shared key, stored in both projects.** It never needs to be typed anywhere else. The `tr -d '\n'` matters: without it the file ends in a line break, the stored key is 65 characters, and every entry is refused as "Wrong key sent to auditIngest" (the sender's HTTP header drops the line break, the check in `auditIngest` doesn't).
    ```
    cd ~ && rm -rf usage && git clone https://github.com/ogpoopdogg/usage.git && cd usage
-   openssl rand -hex 32 > ~/ps-key
+   openssl rand -hex 32 | tr -d '\n' > ~/ps-key
    npx firebase-tools functions:secrets:set PLUTOSCAN_AUDIT_KEY --project eandccourier-36fcc --data-file ~/ps-key
    npx firebase-tools functions:secrets:set PLUTOSCAN_AUDIT_KEY --project plutoscan --data-file ~/ps-key
    rm ~/ps-key

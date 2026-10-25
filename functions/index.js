@@ -363,9 +363,11 @@ for (const w of L.WATCHES) exports['audit' + w.name[0].toUpperCase() + w.name.sl
 const PLUTOSCAN_AUDIT_KEY = defineSecret('PLUTOSCAN_AUDIT_KEY');
 const INGEST_KEYS = { plutoscan: PLUTOSCAN_AUDIT_KEY };
 
+// Trimmed because a key file made with `openssl rand -hex 32 > file` ends in a line break that
+// the secret keeps but the sender's HTTP header drops.
 function sameKey(given, expected) {
-  const a = Buffer.from(String(given || ''));
-  const b = Buffer.from(String(expected || ''));
+  const a = Buffer.from(String(given || '').trim());
+  const b = Buffer.from(String(expected || '').trim());
   return a.length > 0 && b.length >= 32 && a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
