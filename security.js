@@ -9,7 +9,8 @@
 (function () {
     const LOG = 'security_log';
     const ROW_LIMIT = 5000;        // most entries read per list, newest first
-    const SHOW_STEP = 200;         // rows shown at a time in the tables
+    const FIRST_SHOW = 5;          // rows shown in each activity list before "Show more"
+    const SHOW_STEP = 20;          // rows each "Show more" adds
     const AUTO_REFRESH = 2 * 60 * 1000;
 
     const TYPES = {
@@ -34,7 +35,8 @@
     const AT = window.EC_ALERT_TYPES;
     const EMPTY = () => ({ events: [], changes: [], alerts: [], acks: {}, census: {}, devices: {}, stats: {}, pluto: {}, notify: null, phones: {}, cut: {} });
     let data = EMPTY();
-    let shown = { events: SHOW_STEP, changes: SHOW_STEP, accounts: SHOW_STEP };
+    const FIRST = () => ({ alerts: FIRST_SHOW, events: FIRST_SHOW, changes: FIRST_SHOW });
+    let shown = FIRST();
     let started = false;
     let timer = null;
     const charts = {};
@@ -135,7 +137,7 @@
             data = Object.assign(data, { events, changes, alerts, acks: acks.val() || {}, census: census.val() || {},
                 devices: devices.val() || {}, stats: stats.val() || {}, pluto: pluto.val() || {},
                 notify: notify.val(), phones: phones.val() || {} });
-            if (auto !== true) shown = { events: SHOW_STEP, changes: SHOW_STEP, accounts: SHOW_STEP };
+            if (auto !== true) shown = FIRST();
             fillFilters();
             render();
             status('Updated ' + new Date().toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' }) +
@@ -206,14 +208,13 @@
             return;
         }
         const tone = { high: 'bad', medium: 'warn', low: 'info' };
-        $('sec-alerts').innerHTML = rows.slice(0, 300).map(a =>
+        $('sec-alerts').innerHTML = rows.slice(0, shown.alerts).map(a =>
             '<div class="alert' + (data.acks[a.id] ? ' seen' : '') + '">' +
                 '<div class="alert-body">' + pill(a.level || 'low', tone[a.level] || 'info') + '<strong>' + esc(a.title) + '</strong><span>' + esc(a.detail) + '</span>' +
                 '<small>' + esc(whenOf(a)) + ' · ' + esc(AT.TYPES[AT.typeOf(a)].label) + (AT.wantsPush(a, data.notify) ? '' : ' · no notification') + '</small></div>' +
                 (data.acks[a.id] ? '<span class="seen-mark">Seen</span>'
                     : '<button class="btn-ghost small" type="button" data-ack="' + esc(a.id) + '">Seen</button>') +
-            '</div>').join('') +
-            (rows.length > 300 ? '<div class="empty">' + fmt(rows.length - 300) + ' older alerts not shown.</div>' : '');
+            '</div>').join('') + more('alerts', rows.length);
     }
 
     function ack(ids) {
@@ -327,10 +328,13 @@
             }).join('') + '</ul>' + more('events', rows.length);
     }
 
+    // "Show more" under a long list (only the shown rows are drawn, which keeps big lists fast), and "Show less" once opened up
     function more(name, total) {
-        return total > shown[name]
-            ? '<div class="more"><button class="btn-ghost" type="button" data-more="' + name + '">Show more (' + fmt(total - shown[name]) + ' left)</button></div>'
-            : '';
+        const left = total - shown[name];
+        if (left <= 0 && shown[name] <= FIRST_SHOW) return '';
+        return '<div class="more">' +
+            (left > 0 ? '<button class="btn-ghost" type="button" data-more="' + name + '">Show more ▾ <span class="more-n">(' + fmt(left) + ' more)</span></button>' : '') +
+            (shown[name] > FIRST_SHOW ? '<button class="btn-ghost" type="button" data-less="' + name + '">Show less ▴</button>' : '') + '</div>';
     }
 
     // ----- database changes -----
@@ -397,7 +401,7 @@
             .sort((a, b) => (Date.parse(b.lastSignIn) || 0) - (Date.parse(a.lastSignIn) || 0));
         const date = s => (s && Date.parse(s) ? when(Date.parse(s)) : '');
         $('sec-accounts').innerHTML = '<p class="status" style="margin:0 0 8px">' + fmt(rows.length) + ' accounts. Latest sign-in first.</p><ul class="items">' +
-            rows.slice(0, shown.accounts).map(a => {
+            rows.map(a => {
                 const devices = Object.values(data.devices[a.uid] || {});
                 const notes = [];
                 if (a.disabled) notes.push(pill('disabled', 'warn'));
@@ -411,7 +415,7 @@
                     (devices.length ? '<div class="item-detail">' + esc(devices.map(d => d.name || deviceName(d.ua)).join(', ')) + '</div>' : '') +
                     (notes.length ? '<div class="item-detail">' + notes.join(' ') + '</div>' : '') +
                     '<div class="item-meta mono">' + esc(a.uid) + '</div></li>';
-            }).join('') + '</ul>' + more('accounts', rows.length);
+            }).join('') + '</ul>';
     }
 
     // PlutoScan accounts (its own Firebase project), from auditPlutoCensus every 30 minutes
@@ -428,7 +432,7 @@
         const date = s => (s && Date.parse(s) ? when(Date.parse(s)) : '');
         const paid = uids.filter(u => data.pluto[u] && data.pluto[u].paid).length;
         $('sec-accounts').innerHTML = '<p class="status" style="margin:0 0 8px">' + fmt(uids.length) + ' PlutoScan accounts, ' + fmt(paid) + ' paid. Newest first.</p><ul class="items">' +
-            rows.slice(0, shown.accounts).map(a => {
+            rows.map(a => {
                 const notes = [];
                 if (a.disabled) notes.push(pill('disabled', 'warn'));
                 if (a.claims) notes.push(pill('custom claims: ' + a.claims, 'bad'));
@@ -439,7 +443,7 @@
                     '<div class="item-meta">' + esc([a.providers, a.created ? 'created ' + date(a.created) : '', a.lastSignIn ? 'last sign-in ' + date(a.lastSignIn) : ''].filter(Boolean).join(' · ')) + '</div>' +
                     (notes.length ? '<div class="item-detail">' + notes.join(' ') + '</div>' : '') +
                     '<div class="item-meta mono">' + esc(a.uid) + '</div></li>';
-            }).join('') + '</ul>' + more('accounts', rows.length);
+            }).join('') + '</ul>';
     }
 
     // ===== ALERTS SETTINGS (which alerts send a phone notification) =====
@@ -566,21 +570,25 @@
             load();
         });
         $('sec-refresh').addEventListener('click', () => load());
-        $('sec-show-seen').addEventListener('change', renderAlerts);
+        $('sec-show-seen').addEventListener('change', () => { shown.alerts = FIRST_SHOW; renderAlerts(); });
         $('sec-ack-all').addEventListener('click', () => ack(data.alerts.filter(a => !data.acks[a.id]).map(a => a.id)));
         $('sec-alerts').addEventListener('click', e => { const b = e.target.closest('[data-ack]'); if (b) ack([b.dataset.ack]); });
-        ['sec-ev-type', 'sec-ev-app'].forEach(id => $(id).addEventListener('change', () => { shown.events = SHOW_STEP; renderEvents(); }));
-        $('sec-ev-q').addEventListener('input', () => { shown.events = SHOW_STEP; renderEvents(); });
-        ['sec-ch-area', 'sec-ch-action', 'sec-ch-by'].forEach(id => $(id).addEventListener('change', () => { shown.changes = SHOW_STEP; renderChanges(); }));
-        $('sec-ch-q').addEventListener('input', () => { shown.changes = SHOW_STEP; renderChanges(); });
-        $('sec-acc-kind').addEventListener('change', () => { shown.accounts = SHOW_STEP; renderAccounts(); });
-        $('sec-acc-q').addEventListener('input', () => { shown.accounts = SHOW_STEP; renderAccounts(); });
+        ['sec-ev-type', 'sec-ev-app'].forEach(id => $(id).addEventListener('change', () => { shown.events = FIRST_SHOW; renderEvents(); }));
+        $('sec-ev-q').addEventListener('input', () => { shown.events = FIRST_SHOW; renderEvents(); });
+        ['sec-ch-area', 'sec-ch-action', 'sec-ch-by'].forEach(id => $(id).addEventListener('change', () => { shown.changes = FIRST_SHOW; renderChanges(); }));
+        $('sec-ch-q').addEventListener('input', () => { shown.changes = FIRST_SHOW; renderChanges(); });
+        $('sec-acc-kind').addEventListener('change', renderAccounts);
+        $('sec-acc-q').addEventListener('input', renderAccounts);
         $('sec-changes').addEventListener('click', e => { const b = e.target.closest('[data-change]'); if (b) showChange(b.dataset.change, b); });
         wireSettings();
         $('view-security').addEventListener('click', e => {
-            const b = e.target.closest('[data-more]'); if (!b) return;
-            shown[b.dataset.more] += SHOW_STEP;
-            ({ events: renderEvents, changes: renderChanges, accounts: renderAccounts })[b.dataset.more]();
+            const b = e.target.closest('[data-more], [data-less]'); if (!b) return;
+            const name = b.dataset.more || b.dataset.less;
+            const card = b.closest('.card');
+            shown[name] = b.dataset.more ? shown[name] + SHOW_STEP : FIRST_SHOW;
+            ({ alerts: renderAlerts, events: renderEvents, changes: renderChanges })[name]();
+            // After "Show less", bring the list's heading back into view instead of leaving the page far below it
+            if (b.dataset.less && card && card.getBoundingClientRect().top < 0) card.scrollIntoView({ block: 'start' });
         });
     }
 
