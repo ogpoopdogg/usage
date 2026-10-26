@@ -200,7 +200,8 @@
         .item-meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
         .item-detail { font-size: 13px; margin-top: 4px; color: var(--text); }
         .item-foot { display: flex; justify-content: flex-end; margin-top: 8px; }
-        .more { padding: 12px 0 0; text-align: center; }
+        .more { padding: 12px 0 0; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+        .more-n { font-weight: 400; color: var(--muted); }
         .change-detail { margin-top: 10px; padding: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; font-size: 13px; }
         .change-detail h3 { font-size: 12px; color: var(--muted); margin: 12px 0 4px; text-transform: uppercase; letter-spacing: .04em; }
         .change-detail p { margin: 0; }
@@ -665,14 +666,26 @@
             (typeof value === 'number' ? compact(value) : esc(value)) + '</strong><span>' + esc(label) + '</span></div>';
     }
     // A ranked list: one row per item, with a bar scaled to the largest. rows: [{ name, value, sub (HTML), bad }]
+    // Ranked list: the top RANK_FIRST rows, the rest behind "Show more" (they are short lists, so all rows are drawn and just hidden)
+    const RANK_FIRST = 5;
     function rankList(rows, emptyText, limit) {
         if (!rows.length) return '<div class="empty">' + esc(emptyText) + '</div>';
         const max = Math.max(...rows.map(r => r.value), 1);
-        return '<ol class="rank">' + rows.slice(0, limit || rows.length).map(r =>
-            '<li><div class="rank-top"><span class="rank-name">' + esc(r.name) + '</span><span class="rank-val">' + fmt(r.value) + '</span></div>' +
+        const list = rows.slice(0, limit || rows.length);
+        const extra = list.length > RANK_FIRST + 2 ? list.length - RANK_FIRST : 0; // one or two extra rows aren't worth a button
+        return '<ol class="rank">' + list.map((r, i) =>
+            '<li' + (extra && i >= RANK_FIRST ? ' class="rank-extra" hidden' : '') + '><div class="rank-top"><span class="rank-name">' + esc(r.name) + '</span><span class="rank-val">' + fmt(r.value) + '</span></div>' +
             '<div class="bar' + (r.bad ? ' bad' : '') + '"><i style="width:' + (r.value / max * 100).toFixed(1) + '%"></i></div>' +
-            (r.sub ? '<div class="rank-sub">' + r.sub + '</div>' : '') + '</li>').join('') + '</ol>';
+            (r.sub ? '<div class="rank-sub">' + r.sub + '</div>' : '') + '</li>').join('') + '</ol>' +
+            (extra > 0 ? '<div class="more"><button class="btn-ghost" type="button" data-rank-toggle data-extra="' + extra + '" aria-expanded="false">Show more ▾ <span class="more-n">(' + fmt(extra) + ' more)</span></button></div>' : '');
     }
+    document.addEventListener('click', e => {
+        const b = e.target.closest('[data-rank-toggle]'); if (!b) return;
+        const open = b.getAttribute('aria-expanded') !== 'true';
+        b.parentElement.previousElementSibling.querySelectorAll('.rank-extra').forEach(li => { li.hidden = !open; });
+        b.setAttribute('aria-expanded', String(open));
+        b.innerHTML = open ? 'Show less ▴' : 'Show more ▾ <span class="more-n">(' + fmt(Number(b.dataset.extra)) + ' more)</span>';
+    });
 
     // ===== AUTH =====
     $('login-form').addEventListener('submit', e => {
