@@ -510,9 +510,9 @@ exports.auditPrune = onSchedule({ schedule: 'every day 03:30', timeZone: 'Americ
 
 // ---------------------------------------------------------------- daily backup
 
-// 03:00 in Brandon, when nobody is working. The function's service account needs
+// 7:00 PM in Brandon, after the working day. The function's service account needs
 // Storage Object Creator on the bucket (README, "Daily backup").
-exports.auditBackup = onSchedule({ schedule: 'every day 03:00', timeZone: 'America/Winnipeg', region: REGION, memory: MEMORY, timeoutSeconds: 300 }, async () => {
+exports.auditBackup = onSchedule({ schedule: 'every day 19:00', timeZone: 'America/Winnipeg', region: REGION, memory: MEMORY, timeoutSeconds: 300 }, async () => {
   const at = Date.now();
   const dbUrl = db().ref().toString().replace(/\/$/, '');
   try {

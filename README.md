@@ -101,7 +101,7 @@ On first launch: sign in, tap **Allow** when Android asks about notifications, t
 
 ## Daily backup
 
-`auditBackup` saves a copy of the whole database and its rules every night at 03:00 (Brandon time) into the bucket `eandccourier-36fcc-default-rtdb-backups`, under `daily/`, as `<time>_data.json.gz` and `<time>_rules.json.gz`. It was added because Firebase's own automated backups (Realtime Database, Backups tab) got stuck on 2026-10-28. It runs alongside them and can be removed once they work again. The bucket deletes files after 30 days, like Firebase's backups. A failed backup raises a high alert ("Daily database backup failed"), which notifies the phone app.
+`auditBackup` saves a copy of the whole database and its rules every evening at 7:00 PM (Brandon time) into the bucket `eandccourier-36fcc-default-rtdb-backups`, under `daily/`, as `<time>_data.json.gz` and `<time>_rules.json.gz`. It was added because Firebase's own automated backups (Realtime Database, Backups tab) got stuck on 2026-10-28. It runs alongside them and can be removed once they work again. The bucket deletes files after 30 days, like Firebase's backups. A failed backup raises a high alert ("Daily database backup failed"), which notifies the phone app.
 
 One-time setup, in Cloud Shell:
 
