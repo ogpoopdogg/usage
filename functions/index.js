@@ -35,6 +35,9 @@
 
    Upkeep
    - auditPrune (daily): drops events and changes after 90 days, alerts after a year.
+   - auditBackup (daily): a copy of the whole database and its rules in the backup bucket
+     (see backup.js), because Firebase's own automated backups got stuck. A failure raises a
+     high alert.
 
    This is its own Firebase "codebase" (see ../firebase.json), so deploying it never touches
    the time clock's or the dispatch app's functions in the same project. */
@@ -49,9 +52,12 @@ const functionsV1 = require('firebase-functions/v1');
 const logger = require('firebase-functions/logger');
 const admin = require('firebase-admin');
 const { ServerValue } = require('firebase-admin/database');
+const { applicationDefault } = require('firebase-admin/app');
+const { getStorage } = require('firebase-admin/storage');
 const crypto = require('crypto');
 const L = require('./lib');
 const AT = require('./alert-types');
+const BK = require('./backup');
 
 admin.initializeApp();
 
@@ -500,4 +506,31 @@ exports.auditPrune = onSchedule({ schedule: 'every day 03:30', timeZone: 'Americ
   const stats = (await log('stats').orderByKey().endAt(L.dayKey(now - 365 * DAY)).once('value')).val() || {};
   if (Object.keys(stats).length) await log('stats').update(Object.fromEntries(Object.keys(stats).map((k) => [k, null])));
   logger.info('Security log pruned', removed);
+});
+
+// ---------------------------------------------------------------- daily backup
+
+// 7:00 PM in Brandon, after the working day. The function's service account needs
+// Storage Object Creator on the bucket (README, "Daily backup").
+exports.auditBackup = onSchedule({ schedule: 'every day 19:00', timeZone: 'America/Winnipeg', region: REGION, memory: MEMORY, timeoutSeconds: 300 }, async () => {
+  const at = Date.now();
+  const dbUrl = db().ref().toString().replace(/\/$/, '');
+  try {
+    const res = await BK.makeBackup({
+      readData: async () => (await db().ref().once('value')).val(),
+      readRules: async () => {
+        const { access_token: token } = await applicationDefault().getAccessToken();
+        const r = await fetch(dbUrl + '/.settings/rules.json', { headers: { Authorization: 'Bearer ' + token } });
+        if (!r.ok) throw new Error('rules download: HTTP ' + r.status);
+        return r.text();
+      },
+      save: (name, buf) => getStorage().bucket(BK.BUCKET).file(name).save(buf, { resumable: false, contentType: 'application/gzip' })
+    }, at);
+    await tally('auditBackup', at);
+    logger.info('Database backed up', res);
+  } catch (err) {
+    logger.error('Database backup failed', { message: err && err.message });
+    await raise({ type: 'backup_failed', level: 'high', title: 'Daily database backup failed', detail: String((err && err.message) || err) }, 'backup', at);
+    throw err;
+  }
 });
