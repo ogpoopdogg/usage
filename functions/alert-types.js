@@ -28,6 +28,7 @@
     large_delete:     { group: 'ec', level: 'high',   on: true,  label: 'Large delete', help: 'One delete that removes 20 or more values.' },
     many_deletes:     { group: 'ec', level: 'high',   on: true,  label: 'Many deletes in a few minutes', help: '10 deletes by one account within 5 minutes.' },
     report_flood:     { group: 'ec', level: 'medium', on: true,  label: 'Too many reports from one place', help: 'One IP sending more than 60 sign-in reports in 10 minutes.' },
+    backup_failed:    { group: 'ec', level: 'high',   on: true,  label: 'Daily database backup failed', help: 'The nightly copy of the database could not be saved.' },
     ingest_key:       { group: 'ec', level: 'high',   on: true,  label: 'Wrong key sent to the PlutoScan link', help: 'Someone guessing the key PlutoScan uses to send its log here.' },
     other:            { group: 'ec', level: 'medium', on: true,  label: 'Any other alert' },
     // ----- PlutoScan (sent by plutoscan-audit through auditIngest; the type gets a pluto_ prefix there)

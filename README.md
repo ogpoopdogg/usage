@@ -99,6 +99,30 @@ On first launch: sign in, tap **Allow** when Android asks about notifications, t
 - Launcher icon and splash screen: `python3 scripts/make-android-assets.py` (from `icon-512.png`).
 - Building on a computer (Node 22 and Android Studio): `npm install && npm run sync && npm run open:android`.
 
+## Daily backup
+
+`auditBackup` saves a copy of the whole database and its rules every night at 03:00 (Brandon time) into the bucket `eandccourier-36fcc-default-rtdb-backups`, under `daily/`, as `<time>_data.json.gz` and `<time>_rules.json.gz`. It was added because Firebase's own automated backups (Realtime Database, Backups tab) got stuck on 2026-10-28. It runs alongside them and can be removed once they work again. The bucket deletes files after 30 days, like Firebase's backups. A failed backup raises a high alert ("Daily database backup failed"), which notifies the phone app.
+
+One-time setup, in Cloud Shell:
+
+1. **Let the function write to the bucket.** The bucket only lets Firebase's backup service write to it, so give the functions' service account permission to add files (it can't delete or overwrite them):
+   ```
+   PN=$(gcloud projects describe eandccourier-36fcc --format='value(projectNumber)')
+   gcloud storage buckets add-iam-policy-binding gs://eandccourier-36fcc-default-rtdb-backups --member="serviceAccount:${PN}-compute@developer.gserviceaccount.com" --role=roles/storage.objectCreator
+   ```
+2. **Deploy only this function** (deploying the whole codebase at once has hit rate limits before):
+   ```
+   npx firebase-tools deploy --only functions:audit:auditBackup --project eandccourier-36fcc
+   ```
+3. **Run it once now and check the files:**
+   ```
+   gcloud scheduler jobs run firebase-schedule-auditBackup-us-central1 --location=us-central1
+   sleep 60; gsutil ls -l gs://eandccourier-36fcc-default-rtdb-backups/daily/
+   ```
+   If the job name is different, `gcloud scheduler jobs list --location=us-central1` shows it.
+
+To restore, download a `_data.json.gz` file, unzip it, and import it in the Firebase console (Realtime Database, Data, the three-dot menu, Import JSON). Importing replaces the data at that spot, so export the current data first.
+
 ## Running cost
 
 Phone notifications run one short function per alert (`auditAlertPush`), and sending through Firebase Cloud Messaging is free. Each watched change runs one function, so busy areas (time clock punches, jobs) cost the most. The line under the range buttons shows how many times the watchers ran on the latest day, and `security_log/stats` keeps a count per watcher per day. Compare with the Cloud Functions line in the Firebase usage and billing page. Every function is set to 256 MiB of memory to keep each run cheap.
