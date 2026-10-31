@@ -46,6 +46,7 @@
 const { onValueWritten, onValueCreated } = require('firebase-functions/v2/database');
 const { onRequest } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
+const { onMessagePublished } = require('firebase-functions/v2/pubsub');
 const { defineSecret } = require('firebase-functions/params');
 const { beforeUserSignedIn, beforeEmailSent, beforeSmsSent } = require('firebase-functions/v2/identity');
 const functionsV1 = require('firebase-functions/v1');
@@ -58,6 +59,7 @@ const crypto = require('crypto');
 const L = require('./lib');
 const AT = require('./alert-types');
 const BK = require('./backup');
+const W = require('./watch');
 
 admin.initializeApp();
 
@@ -103,9 +105,13 @@ async function count(path) {
   return res.snapshot.val() || 0;
 }
 
-/** How many times each function ran today, so the page can show what the watching costs. */
+/** How many times each function ran today, so the page can show what the watching costs, and
+ * when it last ran (security_log/last), so auditHeartbeat can tell if one stopped. */
 function tally(name, at) {
-  return log('stats/' + L.dayKey(at) + '/' + name).set(ServerValue.increment(1));
+  return Promise.all([
+    log('stats/' + L.dayKey(at) + '/' + name).set(ServerValue.increment(1)),
+    log('last/' + name).set(at)
+  ]);
 }
 
 // ---------------------------------------------------------------- failed and refused sign-ins
@@ -209,6 +215,15 @@ async function logSignIn(event) {
       }
       return write;
     }));
+    if (entry.staff && entry.ip) {
+      const net = W.networkOf(entry.ip);
+      const netKey = net ? L.safeKey(net) : null;
+      const networks = log('networks/' + entry.uid);
+      jobs.push(networks.once('value').then((snap) => {
+        const odd = W.signInOddities(entry, snap.val(), netKey);
+        return Promise.all([netKey ? networks.child(netKey).set(at) : null, ...odd.map((a) => raise(a, 'signin', at))]);
+      }));
+    }
   }
   await Promise.all(jobs);
 }
@@ -252,7 +267,8 @@ exports.auditUserCreated = functionsV1.region(REGION).runWith({ memory: '256MB' 
   await Promise.all([
     log('events').push(Object.assign({ at, type: 'user_created', ok: true, staff }, s)),
     log('census/' + u.uid).set(L.censusOf(u)),
-    staff ? raise({ type: 'new_staff', level: 'medium', title: 'New staff account', detail: s.email + ' was created (' + (s.provider || 'no sign-in method') + ').' }, 'accounts', at) : null,
+    staff ? raise({ type: 'new_staff', level: 'medium', title: 'New staff account', detail: s.email + ' was created (' + (s.provider || 'no sign-in method') + ').' }, 'accounts', at)
+      : raise({ type: 'new_account', level: 'medium', title: 'New account: ' + (s.email || s.phone || s.uid), detail: (s.email || s.phone || s.uid) + ' made an account (' + (s.provider || 'no sign-in method') + '). Every account so far is @ec.com, so check who this is.' }, 'accounts', at),
     tally('auditUserCreated', at)
   ]);
 });
@@ -265,6 +281,7 @@ exports.auditUserDeleted = functionsV1.region(REGION).runWith({ memory: '256MB' 
     log('events').push(Object.assign({ at, type: 'user_deleted', ok: true, staff }, s)),
     log('census/' + u.uid).remove(),
     log('devices/' + u.uid).remove(),
+    log('networks/' + u.uid).remove(),
     raise({ type: 'account_deleted', level: staff ? 'high' : 'low', title: 'Account deleted', detail: (s.email || s.phone || s.uid) + ' was deleted.' }, 'accounts', at),
     tally('auditUserDeleted', at)
   ]);
@@ -347,6 +364,16 @@ function watcher(watch) {
     if (entry.action === 'updated' && !entry.fields.length) return;  // written with the same value
     const jobs = [log('changes').push(entry), tally(watch.name, at)];
     const alerts = L.changeAlerts(entry, watch, { staff: person ? person.staff : null, adminEmail: !!(person && L.ADMIN_EMAILS.includes(person.email)) });
+    const who = entry.by.email || entry.by.uid || (entry.by.type === 'admin' ? 'Server code or the console' : 'An unknown writer');
+    const odd = W.suspiciousValues(event.data.before.val(), event.data.after.val());
+    if (odd.length) {
+      alerts.push({ type: 'injection', level: 'high', title: 'Possible code hidden in ' + watch.area,
+        detail: who + ' saved ' + entry.path + ' with ' + odd.map((o) => o.why + ' in ' + o.f + (o.sample ? ': ' + JSON.stringify(o.sample) : '')).join('; ') });
+    }
+    if (watch.name === 'tcShifts') {
+      alerts.push(...W.shiftAlerts({ before: event.data.before.val(), after: event.data.after.val(), path: entry.path, who,
+        admin: entry.by.type === 'admin' || !!(person && L.ADMIN_EMAILS.includes(person.email)) }));
+    }
     for (const a of alerts) jobs.push(raise(a, watch.name, at));
     if (entry.action === 'deleted') {
       // Per account; changes with no account (server code, the console) are counted together
@@ -494,7 +521,7 @@ exports.auditPrune = onSchedule({ schedule: 'every day 03:30', timeZone: 'Americ
   if (Object.keys(acks).length) await log('acks').update(Object.fromEntries(Object.keys(acks).map((k) => [k, null])));
   // Counters are kept in time buckets (bucket = time / window); drop old buckets
   const counters = (await log('counters').once('value')).val() || {};
-  const windows = { failed_email: FAIL_WINDOW, failed_ip: FAIL_WINDOW, reports: REPORT_WINDOW, deletes: DELETE_WINDOW, ingest_refused: REPORT_WINDOW };
+  const windows = { failed_email: FAIL_WINDOW, failed_ip: FAIL_WINDOW, reports: REPORT_WINDOW, deletes: DELETE_WINDOW, ingest_refused: REPORT_WINDOW, github_refused: REPORT_WINDOW, cloud: REPORT_WINDOW };
   const updates = {};
   for (const [kind, buckets] of Object.entries(counters)) {
     const ms = windows[kind];
@@ -505,6 +532,7 @@ exports.auditPrune = onSchedule({ schedule: 'every day 03:30', timeZone: 'Americ
   // Stats for a year
   const stats = (await log('stats').orderByKey().endAt(L.dayKey(now - 365 * DAY)).once('value')).val() || {};
   if (Object.keys(stats).length) await log('stats').update(Object.fromEntries(Object.keys(stats).map((k) => [k, null])));
+  await tally('auditPrune', now);
   logger.info('Security log pruned', removed);
 });
 
@@ -533,4 +561,187 @@ exports.auditBackup = onSchedule({ schedule: 'every day 19:00', timeZone: 'Ameri
     await raise({ type: 'backup_failed', level: 'high', title: 'Daily database backup failed', detail: String((err && err.message) || err) }, 'backup', at);
     throw err;
   }
+});
+
+// ---------------------------------------------------------------- extra watches (see watch.js)
+
+function projectId() {
+  try { return JSON.parse(process.env.FIREBASE_CONFIG || '{}').projectId || process.env.GCLOUD_PROJECT; } catch (e) { return process.env.GCLOUD_PROJECT; }
+}
+let projectNumberCache = null;
+/** The project's number, from the metadata server (names the Google-managed deploy accounts). */
+async function projectNumber() {
+  if (projectNumberCache) return projectNumberCache;
+  try {
+    const r = await fetch('http://metadata.google.internal/computeMetadata/v1/project/numeric-project-id', { headers: { 'Metadata-Flavor': 'Google' } });
+    if (r.ok) projectNumberCache = (await r.text()).trim();
+  } catch (e) { logger.warn('Project number unknown', { message: e.message }); }
+  return projectNumberCache || '';
+}
+async function googleToken() { return (await applicationDefault().getAccessToken()).access_token; }
+
+/** The live database rules, as text. */
+async function readRules() {
+  const dbUrl = db().ref().toString().replace(/\/$/, '');
+  const r = await fetch(dbUrl + '/.settings/rules.json', { headers: { Authorization: 'Bearer ' + await googleToken() } });
+  if (!r.ok) throw new Error('rules download: HTTP ' + r.status);
+  return r.text();
+}
+
+// Every hour: the rules compared with the last copy (security_log/rules_watch). The rules live only
+// in the Firebase console, so this is the only way to know they were changed, by whom is in the
+// Google Cloud alerts if the log sink is set up.
+exports.auditRulesCheck = onSchedule({ schedule: 'every 60 minutes', region: REGION, memory: MEMORY, timeoutSeconds: 120 }, async () => {
+  const at = Date.now();
+  const text = await readRules();
+  const h = L.hash(text);
+  const ref = log('rules_watch');
+  const was = (await ref.once('value')).val();
+  if (was && was.hash !== h) {
+    const diff = W.rulesDiff(was.text, text);
+    const opened = W.rulesLoosened(diff.changes);
+    const list = diff.changes.slice(0, 8).map((c) => c.path + (c.a == null ? ' (removed)' : c.b == null ? ' (added)' : '')).join(', ');
+    await Promise.all([
+      raise({ type: 'rules_changed', level: opened.length || !diff.parsed ? 'high' : 'medium',
+        title: opened.length ? 'Database rules opened up' : 'Database rules changed',
+        detail: (diff.parsed ? diff.changes.length + (diff.changes.length >= 15 ? '+' : '') + ' rule(s) changed: ' + list : 'The rules text changed (could not compare it rule by rule).') +
+          (opened.length ? ' Opened: ' + opened.map((c) => c.path + ' = ' + (c.a == null ? 'removed' : c.a)).join(', ') + '.' : '') +
+          ' The old copy is in security_log/rules_watch/previous.' }, 'rules', at),
+      log('changes').push({ at, area: 'Database rules', watch: 'rules', path: '.settings/rules', action: 'updated',
+        by: { type: 'console', uid: null }, fields: diff.changes.slice(0, 40).map((c) => ({ f: c.path, b: c.b, a: c.a })), n: diff.changes.length, before: null, after: null })
+    ]);
+  }
+  if (!was || was.hash !== h) {
+    await ref.set({ hash: h, at, text, size: text.length, previous: was ? { hash: was.hash, at: was.at, text: was.text } : null });
+  }
+  await tally('auditRulesCheck', at);
+});
+
+// Every hour: how much was downloaded from the database in the last full hour (Cloud Monitoring,
+// firebasedatabase.googleapis.com/network/sent_bytes_count), compared with the hours before
+// (security_log/usage, kept 8 days). The functions' service account needs Monitoring Viewer (README).
+exports.auditUsageCheck = onSchedule({ schedule: 'every 60 minutes', region: REGION, memory: MEMORY, timeoutSeconds: 120 }, async () => {
+  const at = Date.now();
+  const end = Math.floor((at - 10 * MIN) / W.HOUR) * W.HOUR;  // the last full hour, after the metric's delay
+  const start = end - W.HOUR;
+  const q = new URLSearchParams({
+    filter: 'metric.type="firebasedatabase.googleapis.com/network/sent_bytes_count"',
+    'interval.startTime': new Date(start).toISOString(),
+    'interval.endTime': new Date(end).toISOString(),
+    'aggregation.alignmentPeriod': '3600s',
+    'aggregation.perSeriesAligner': 'ALIGN_SUM',
+    'aggregation.crossSeriesReducer': 'REDUCE_SUM'
+  });
+  const r = await fetch('https://monitoring.googleapis.com/v3/projects/' + projectId() + '/timeSeries?' + q, { headers: { Authorization: 'Bearer ' + await googleToken() } });
+  if (!r.ok) throw new Error('Cloud Monitoring: HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
+  const body = await r.json();
+  let bytes = 0;
+  for (const ts of body.timeSeries || []) for (const p of ts.points || []) bytes += Number(p.value && (p.value.int64Value || p.value.doubleValue)) || 0;
+  const key = String(start);
+  const usage = log('usage');
+  const past = (await usage.orderByKey().startAt(String(start - 8 * W.DAY)).once('value')).val() || {};
+  delete past[key];
+  const spike = (await log('usage_alerted/' + key).once('value')).exists() ? null : W.usageSpike(bytes, Object.values(past));
+  const old = Object.keys(past).filter((k) => Number(k) < start - 8 * W.DAY);
+  await Promise.all([
+    usage.child(key).set(bytes),
+    old.length ? usage.update(Object.fromEntries(old.map((k) => [k, null]))) : null,
+    spike ? raise(spike, 'usage', at) : null,
+    spike ? log('usage_alerted/' + key).set(true) : null
+  ]);
+  await tally('auditUsageCheck', at);
+});
+
+// Google Cloud Admin Activity audit logs, sent by the log sink "security-cloud-log" to this topic
+// (README, "Google Cloud alerts"). Firebase's own deploy accounts are routine, one level lower.
+const CLOUD_TOPIC = 'security-cloud-log';
+exports.auditCloudLog = onMessagePublished({ topic: CLOUD_TOPIC, region: REGION, memory: MEMORY, maxInstances: 3 }, async (event) => {
+  const at = Date.now();
+  const entry = event.data && event.data.message && event.data.message.json;
+  const pn = await projectNumber();
+  const routine = [pn && pn + '-compute@developer.gserviceaccount.com', pn && 'service-' + pn + '@gcf-admin-robot.iam.gserviceaccount.com',
+    pn && pn + '@cloudbuild.gserviceaccount.com', pn && pn + '@cloudservices.gserviceaccount.com'].filter(Boolean);
+  const found = W.cloudLogAlert(entry, routine);
+  if (found) {
+    const { who, method, resource, ...alert } = found;
+    // Every one is listed under Changes; a deploy makes dozens, so one alert per kind per account per 10 minutes.
+    const jobs = [log('changes').push({ at, area: 'Google Cloud', watch: 'cloud', path: L.clip(resource || method, 300), action: 'updated',
+      by: { type: 'google', uid: null, email: who }, fields: [{ f: 'method', b: null, a: method }], n: 1, before: null, after: null })];
+    const n = await count('cloud/' + L.bucket(at, REPORT_WINDOW) + '/' + L.safeKey(alert.type + '_' + alert.level + '_' + who));
+    if (n === 1) jobs.push(raise(Object.assign(alert, { detail: alert.detail + ' Further changes like this by the same account in the next 10 minutes are listed under Changes only.' }), 'cloud', at));
+    await Promise.all(jobs);
+  }
+  await tally('auditCloudLog', at);
+});
+
+// Budget notifications from Billing → Budgets & alerts, sent to this topic (README, "Spending budget").
+const BUDGET_TOPIC = 'security-budget';
+exports.auditBudget = onMessagePublished({ topic: BUDGET_TOPIC, region: REGION, memory: MEMORY, maxInstances: 2 }, async (event) => {
+  const at = Date.now();
+  const msg = event.data && event.data.message && event.data.message.json;
+  if (!msg) return;
+  const month = L.safeKey(String(msg.costIntervalStart || L.dayKey(at).slice(0, 7)).slice(0, 10));
+  const ref = log('budget/' + L.safeKey((event.data.message.attributes || {}).budgetId || 'budget') + '/' + month);
+  let got = null;
+  await ref.transaction((last) => {
+    got = W.budgetAlert(msg, last);
+    return got ? got.step : undefined;  // undefined: leave it as it is
+  });
+  if (got) await raise(got.alert, 'budget', at);
+  await tally('auditBudget', at);
+});
+
+// GitHub webhooks from each repository (README, "GitHub alerts"), signed with this secret.
+const GITHUB_WEBHOOK_SECRET = defineSecret('GITHUB_WEBHOOK_SECRET');
+exports.auditGitHub = onRequest(
+  { region: REGION, memory: MEMORY, invoker: 'public', maxInstances: 3, concurrency: 20, secrets: [GITHUB_WEBHOOK_SECRET] },
+  async (req, res) => {
+    if (req.method !== 'POST') { res.status(405).end(); return; }
+    const at = Date.now();
+    const raw = Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from('');
+    const sig = String(req.get('x-hub-signature-256') || '');
+    const want = 'sha256=' + crypto.createHmac('sha256', String(GITHUB_WEBHOOK_SECRET.value() || '').trim()).update(raw).digest('hex');
+    if (sig.length !== want.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want))) {
+      const ip = L.requestIp(req);
+      const n = await count('github_refused/' + L.bucket(at, REPORT_WINDOW) + '/' + L.safeKey(ip)).catch(() => 0);
+      if (n === 5) {
+        await raise({ type: 'ingest_key', level: 'high', title: 'Fake GitHub messages', detail: 'IP ' + ip + ' sent ' + n + ' unsigned or wrongly signed GitHub messages in 10 minutes.' }, 'github', at).catch(() => {});
+      }
+      res.status(403).end();
+      return;
+    }
+    try {
+      const event = String(req.get('x-github-event') || '');
+      if (event === 'ping') { await tally('auditGitHub', at); res.status(204).end(); return; }
+      const alert = W.githubAlert(event, JSON.parse(raw.toString('utf8')));
+      if (alert) await raise(alert, 'github', at);
+      await tally('auditGitHub', at);
+      res.status(204).end();
+    } catch (e) {
+      logger.error('GitHub message not logged', e);
+      res.status(500).end();
+    }
+  }
+);
+
+// Every morning at 8: checks every scheduled watcher ran when it should have. All fine sends the
+// "all OK" notification (alert kind heartbeat in the Alerts settings); a stopped one raises a high alert.
+exports.auditHeartbeat = onSchedule({ schedule: 'every day 08:00', timeZone: 'America/Winnipeg', region: REGION, memory: MEMORY, timeoutSeconds: 120 }, async () => {
+  const at = Date.now();
+  const [last, notify, alerts] = await Promise.all([
+    log('last').once('value').then((s) => s.val() || {}),
+    log('notify').once('value').then((s) => s.val()),
+    log('alerts').orderByKey().startAt(L.pushIdAt(at - W.DAY)).once('value').then((s) => s.val() || {})
+  ]);
+  const problems = W.heartbeatProblems(last, at);
+  const open = Object.values(alerts).filter((a) => a && a.level === 'high').length;
+  await log('heartbeat').set({ at, ok: !problems.length, problems, highAlerts24h: open });
+  if (problems.length) {
+    await raise({ type: 'watch_stopped', level: 'high', title: problems.length + ' watcher(s) stopped running',
+      detail: problems.map((p) => p.name + ' (last ran ' + (p.last ? new Date(p.last).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : 'never') + ')').join(', ') + '. Check Functions → Logs in the Firebase console.' }, 'heartbeat', at);
+  } else if (AT.wantsPush({ type: 'heartbeat' }, notify)) {
+    await pushToPhones({ title: 'Security: all OK', body: 'Every watcher ran, and last night’s backup saved.' + (open ? ' ' + open + ' high alert(s) in the last 24 hours.' : ' No high alerts in the last 24 hours.'),
+      tag: 'heartbeat', data: { type: 'heartbeat' } });
+  }
+  await tally('auditHeartbeat', at);
 });

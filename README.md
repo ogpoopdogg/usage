@@ -123,6 +123,43 @@ One-time setup, in Cloud Shell:
 
 To restore, download a `_data.json.gz` file, unzip it, and import it in the Firebase console (Realtime Database, Data, the three-dot menu, Import JSON). Importing replaces the data at that spot, so export the current data first.
 
+## Extra watches
+
+Added on 2026-10-31. The pure parts are in `functions/watch.js` (tested in `watch.test.js`); `functions/index.js` runs them. Every one writes to the same alert list, so each shows in the Security tab and can be ticked on or off for phone notifications under Alerts settings.
+
+| Watch | What raises it | Alert kind |
+|---|---|---|
+| Code hidden in saved data | Any watched change whose new or changed text contains a script tag, an event handler (`onerror=`), a `javascript:` link, encoded `<` `>`, a template expression, browser code, a `__proto__` key, or more than 20,000 characters in one field | `injection` (high) |
+| Dispatch | Changes to `dispatch_contacts` (driver list) and `dispatch_settings` (reminders), like the other watched areas | `settings_change`, `nonstaff_change` |
+| Database rules | `auditRulesCheck` downloads the rules every hour and compares them with the last copy in `security_log/rules_watch` (the copy before that is kept as `previous`) | `rules_changed` (high if a `.read`/`.write` became `true` or was removed) |
+| New account | Any new account that is not @ec.com | `new_account` |
+| Night sign-in | A staff sign-in between midnight and 5 AM Brandon time (fixed UTC-5, Manitoba's time from 2026-11-01) | `night_signin` |
+| New network | A staff sign-in from an IP range the account hasn't used (`security_log/networks`); off by default because phones change networks | `new_network` |
+| Time clock | A saved punch in or punch out changed by anyone other than an admin, or a shift deleted | `tc_punch_changed`, `tc_shift_deleted` |
+| Database downloads | `auditUsageCheck` reads the last full hour of `firebasedatabase.googleapis.com/network/sent_bytes_count` from Cloud Monitoring every hour; 5× the usual hour (median of 8 days, at least 200 MB) or 2 GB in an hour | `download_spike` |
+| Google Cloud | `auditCloudLog` gets Admin Activity audit log entries from a log sink: permissions, service accounts and keys, API keys, buckets, Cloud Functions, scheduled jobs. Each is listed under Changes; one alert per kind per account per 10 minutes (a deploy makes dozens) | `cloud_access`, `cloud_functions` |
+| Spending | `auditBudget` gets the budget's notifications; one alert per step passed per month | `budget` |
+| GitHub | `auditGitHub` gets webhooks: collaborators, deploy keys, repo made public, deleted, renamed or transferred, force pushes, branch rules, failed Pages builds, pushes to the main branch (off by default) | `github_access`, `github_site`, `github_push` |
+| Heartbeat | `auditHeartbeat`, 8 AM Brandon time: checks the scheduled watchers ran (`security_log/last`). All fine sends a "Security: all OK" notification; a stopped one raises a high alert. If the morning notification stops coming, the watching itself has stopped | `heartbeat`, `watch_stopped` |
+
+### One-time setup, in Cloud Shell
+
+The steps are in `scripts/setup-extra-watches.sh` (Cloud Shell, run from this repo's folder). In short:
+
+1. Give the functions' service account `roles/monitoring.viewer` (for the download check).
+2. Make the Pub/Sub topics `security-cloud-log` and `security-budget`.
+3. Make the log sink `security-cloud-log` that sends the Admin Activity entries to that topic, and let the sink's writer publish to it.
+4. Make a budget on the E&C billing account that sends to `security-budget`.
+5. Make the secret `GITHUB_WEBHOOK_SECRET` (a random value; it is also pasted into each GitHub webhook).
+6. Deploy the audit codebase in batches (all functions changed: `tally` now also records when each ran).
+7. Add the webhook to each GitHub repository: Settings → Webhooks → Add webhook. Payload URL `https://us-central1-eandccourier-36fcc.cloudfunctions.net/auditGitHub`, content type `application/json`, the secret from step 5, and "Let me select individual events": Branch protection rules, Collaborator add, remove, or changed, Deploy keys, Page builds, Pushes, Repositories, Repository rulesets, Visibility changes.
+
+### Limits
+
+- The injection check looks only at the watched areas (the table under "Watched parts of the database" plus Dispatch), and only at text that is new or changed. It is a set of patterns, not a guarantee: it catches the usual attempts, and the apps escaping what they show is still what actually stops them.
+- The rules check runs hourly, so a change and a change back within the hour is missed. Who changed them shows only in the Google Cloud alerts if the log sink is set up.
+- Cloud Monitoring numbers arrive a few minutes late, so the download check looks at the hour ending 10 minutes ago. It needs 24 hours of history before it raises a medium alert.
+
 ## Running cost
 
 Phone notifications run one short function per alert (`auditAlertPush`), and sending through Firebase Cloud Messaging is free. Each watched change runs one function, so busy areas (time clock punches, jobs) cost the most. The line under the range buttons shows how many times the watchers ran on the latest day, and `security_log/stats` keeps a count per watcher per day. Compare with the Cloud Functions line in the Firebase usage and billing page. Every function is set to 256 MiB of memory to keep each run cheap.
@@ -133,6 +170,6 @@ Phone notifications run one short function per alert (`auditAlertPush`), and sen
 cd functions && npm test
 ```
 
-The tests cover the pure parts in `functions/lib.js` and `functions/alert-types.js`: report checking, sign-in and change entries, field differences, alerts and their kinds, which alerts notify, and the account census.
+The tests cover the pure parts in `functions/lib.js`, `functions/watch.js` and `functions/alert-types.js`: report checking, sign-in and change entries, field differences, alerts and their kinds, which alerts notify, and the account census.
 
 The functions were also run end to end in the Firebase emulators (auth, database, functions) with the page signed in as the admin: sign-ups, sign-ins, wrong passwords, a refused account, staff edits to the address lookup, a server-side mass delete, alerts, marking alerts seen, and the page on desktop and phone widths. The emulator sends every blocking event to one function, so `auditBeforeEmail` and `auditBeforeSms` were left out of that run.
