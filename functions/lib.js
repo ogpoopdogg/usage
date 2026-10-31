@@ -206,7 +206,9 @@ const WATCHES = [
   { name: 'tcVans', path: 'timeclock/vans/{id}', area: 'Vans' },
   { name: 'tcOilPlan', path: 'timeclock/oil_plan', area: 'Oil check schedule' },
   { name: 'tcVehicleClaims', path: 'timeclock/vehicle_claims/{gpsId}', area: 'Van picks' },
-  { name: 'garage', path: 'garage/{section}/{id}', area: 'Garage', skip: ['history'] }
+  { name: 'garage', path: 'garage/{section}/{id}', area: 'Garage', skip: ['history'] },
+  { name: 'dispatchContacts', path: 'dispatch_contacts/{section}/{id}', area: 'Dispatch drivers list', staffOnly: true },
+  { name: 'dispatchSettings', path: 'dispatch_settings/{section}', area: 'Dispatch settings', level: 'medium', staffOnly: true }
 ];
 
 function actionOf(before, after) {
