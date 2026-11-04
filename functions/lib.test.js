@@ -256,3 +256,19 @@ test('PlutoScan alerts get a pluto_ kind', () => {
   const c = L.ingestEntry(send({ kind: 'alerts', entry: { level: 'high', title: 'from before kinds' } }), 'plutoscan', AT);
   assert.equal(c.entry.type, 'pluto_other');
 });
+
+test('everyday areas are dropped from the change log after their shorter keep time', () => {
+  const now = Date.UTC(2026, 10, 4, 12);
+  const d = 24 * 60 * 60 * 1000;
+  const entries = {
+    a: { watch: 'routePlanner', at: now - 15 * d },   // past 14 days: dropped
+    b: { watch: 'routePlanner', at: now - 13 * d },   // still kept
+    c: { watch: 'sessions', at: now - 20 * d },       // dropped
+    d: { watch: 'staff', at: now - 60 * d },          // normal area: left for the 90-day cleanup
+    e: { watch: 'tcShifts', at: now - 30 * d },       // punches keep 90 days
+    f: { watch: 'pushTokens', at: now - 14 * d - 1 }, // dropped
+    g: null
+  };
+  assert.deepEqual(L.shortKeepDrops(entries, now).sort(), ['a', 'c', 'f']);
+  assert.deepEqual(L.WATCHES.filter((w) => w.keepDays).map((w) => w.name).sort(), ['nicknames', 'pushTokens', 'routePlanner', 'sessions']);
+});

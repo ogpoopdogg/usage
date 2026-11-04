@@ -172,13 +172,24 @@ function deviceName(ua) {
   return os ? browser + ' on ' + os : browser;
 }
 /** The key a device is remembered by: the browser and system, not the version or IP (those change often). */
+/** Log entries (key -> entry) whose watcher keeps them a short time and that are older than its
+ *  keepDays: the keys auditPrune deletes. */
+function shortKeepDrops(entries, now) {
+  const days = Object.fromEntries(WATCHES.filter((w) => w.keepDays).map((w) => [w.name, w.keepDays]));
+  return Object.entries(entries || {})
+    .filter(([, e]) => e && days[e.watch] && Number(e.at) < now - days[e.watch] * 24 * 60 * 60 * 1000)
+    .map(([k]) => k);
+}
+
 function deviceKey(ua) { return hash(deviceName(ua)); }
 
 // ---------------------------------------------------------------- database changes
 
 /**
  * What the watchers look at. path: the trigger path; area: the name the page shows; level: the alert
- * any change raises (null = none); staffOnly: only staff accounts should ever write here.
+ * any change raises (null = none); staffOnly: only staff accounts should ever write here;
+ * keepDays: everyday app activity whose log entries are kept that many days instead of the usual 90
+ * (auditPrune). Alerts are raised the same either way.
  * Busy data that changes many times a minute is left out on purpose (see README): live driver
  * positions (developer/dispatch_dashboard/drivers, poll_state), API counters
  * (developer/api_usage), the request counter, and the apps' own logs (timeclock/audit, garage/history).
@@ -192,12 +203,12 @@ const WATCHES = [
   { name: 'companies', path: 'companies/{cid}', area: 'Companies' },
   { name: 'joinCodes', path: 'join_codes/{code}', area: 'Join codes' },
   { name: 'users', path: 'users/{uid}', area: 'Customer profiles' },
-  { name: 'pushTokens', path: 'push_tokens/{uid}', area: 'Dispatch phones' },
+  { name: 'pushTokens', path: 'push_tokens/{uid}', area: 'Dispatch phones', keepDays: 14 },
   { name: 'allowedUsers', path: 'developer/dispatch_dashboard/allowed_users', area: 'RouteWatcher allowed users', level: 'high', staffOnly: true },
   { name: 'masterConfig', path: 'developer/dispatch_dashboard/master_config', area: 'RouteWatcher settings', level: 'medium', staffOnly: true },
-  { name: 'nicknames', path: 'developer/dispatch_dashboard/driver_nicknames/{gpsId}', area: 'Driver nicknames' },
-  { name: 'sessions', path: 'developer/dispatch_dashboard/active_sessions/{uid}', area: 'RouteWatcher sign-in locks', staffOnly: true, quiet: true },
-  { name: 'routePlanner', path: 'developer/route_planner/{section}/{id}', area: 'Route planner', staffOnly: true, skip: ['ui_prefs', 'notification_reads'] },
+  { name: 'nicknames', path: 'developer/dispatch_dashboard/driver_nicknames/{gpsId}', area: 'Driver nicknames', keepDays: 14 },
+  { name: 'sessions', path: 'developer/dispatch_dashboard/active_sessions/{uid}', area: 'RouteWatcher sign-in locks', staffOnly: true, quiet: true, keepDays: 14 },
+  { name: 'routePlanner', path: 'developer/route_planner/{section}/{id}', area: 'Route planner', staffOnly: true, skip: ['ui_prefs', 'notification_reads'], keepDays: 14 },
   { name: 'tcEmployees', path: 'timeclock/employees/{ek}', area: 'Time clock employees', level: 'high' },
   { name: 'tcSettings', path: 'timeclock/settings', area: 'Time clock settings', level: 'medium' },
   { name: 'tcShifts', path: 'timeclock/shifts/{ek}/{shiftId}', area: 'Time clock punches' },
@@ -406,7 +417,7 @@ function ingestEntry(text, app, at) {
 }
 
 module.exports = {
-  ADMIN_EMAILS, WATCHES, REPORT_MAX, INGEST_APPS,
+  ADMIN_EMAILS, WATCHES, REPORT_MAX, INGEST_APPS, shortKeepDrops,
   ingestEntry,
   clip, normEmail, safeKey, hash, dayKey, bucket, requestIp, pushIdAt,
   parseReport, reportEntry, signInRowFor, SIGNIN_MATCH, authEventEntry, deviceName, deviceKey,
