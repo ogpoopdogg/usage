@@ -11,6 +11,7 @@
    - cloudLogAlert: Google Cloud changes worth knowing about (who can get in, keys, functions).
    - budgetAlert: the monthly spending budget crossing one of its steps.
    - githubAlert: GitHub changes worth knowing about (new collaborators, keys, repo made public).
+   - signInLogFailure: a failed password sign-in from Firebase's own activity log.
    - heartbeatProblems: watchers that have stopped running. */
 'use strict';
 
@@ -202,9 +203,12 @@ function stamp(t) {
 
 // ---------------------------------------------------------------- database downloads
 
-const SPIKE_TIMES = 5;            // an hour this many times the usual one ...
-const SPIKE_MIN = 200 * 1e6;      // ... and at least 200 MB
-const SPIKE_HIGH = 2 * 1e9;       // 2 GB in an hour is always high
+/* The whole database is about 11 MB (Nov 2026), so a full copy by one signed-in account is only
+   that much. The thresholds are set so a copy of the whole database stands out. auditUsageCheck
+   leaves out what the nightly backup itself downloaded. */
+const SPIKE_TIMES = 3;            // an hour this many times the usual one ...
+const SPIKE_MIN = 15 * 1e6;       // ... and at least 15 MB
+const SPIKE_HIGH = 100 * 1e6;     // 100 MB in an hour is always high
 
 /** An alert when the last hour's download (bytes) is far above the usual hour. history: earlier
  * hours' bytes. The usual hour is the median, so one busy hour doesn't move it much. */
@@ -215,7 +219,7 @@ function usageSpike(bytes, history) {
   const mb = (n) => (n / 1e6).toFixed(n < 1e7 ? 1 : 0) + ' MB';
   if (bytes >= SPIKE_HIGH) {
     return { type: 'download_spike', level: 'high', title: 'Very large database download',
-      detail: mb(bytes) + ' was downloaded from the database in one hour (usual hour: ' + mb(usual) + '). Someone may be copying the data.' };
+      detail: mb(bytes) + ' was downloaded from the database in one hour (usual hour: ' + mb(usual) + '). That is more than the whole database, so someone may be copying it.' };
   }
   if (past.length >= 24 && bytes >= SPIKE_MIN && bytes >= usual * SPIKE_TIMES) {
     return { type: 'download_spike', level: 'medium', title: 'Database download spike',
@@ -237,8 +241,23 @@ const CLOUD_METHODS = [
   { re: /^storage\.setIamPermissions$/i, type: 'cloud_access', level: 'high', what: 'changed who can use a storage bucket' },
   { re: /^storage\.buckets\.(create|delete|update|patch)$/i, type: 'cloud_access', level: 'medium', what: 'changed a storage bucket' },
   { re: /(Create|Update|Delete)(Release|Ruleset)$/i, type: 'cloud_access', level: 'medium', what: 'changed Firebase security rules' },
-  { re: /CloudScheduler\.(CreateJob|UpdateJob|DeleteJob|PauseJob|ResumeJob)$/i, type: 'cloud_functions', level: 'low', what: 'changed a scheduled job' }
+  { re: /CloudScheduler\.(CreateJob|UpdateJob|DeleteJob|PauseJob|ResumeJob)$/i, type: 'cloud_functions', level: 'low', what: 'changed a scheduled job' },
+  // Added 2026-11-04: the ways to switch the watching itself off
+  { re: /ConfigServiceV2\.(CreateSink|UpdateSink|DeleteSink|CreateExclusion|UpdateExclusion|DeleteExclusion|UpdateCmekSettings|UpdateSettings)$/i, type: 'cloud_access', level: 'high', what: 'changed the security log feed (log sinks)' },
+  { re: /pubsub\.v1\.(Publisher\.(DeleteTopic|UpdateTopic|DetachSubscription)|Subscriber\.(DeleteSubscription|UpdateSubscription|ModifyPushConfig))$/i, type: 'cloud_access', level: 'high', what: 'changed a Pub/Sub topic or subscription the watchers use' },
+  { re: /identitytoolkit\..*(UpdateConfig|SetProjectConfig|(Create|Update|Delete)(DefaultSupportedIdpConfig|OAuthIdpConfig|InboundSamlConfig|Tenant))$/i, type: 'cloud_access', level: 'high', what: 'changed Firebase sign-in settings' },
+  { re: /run\.v\d\.Services\.(DeleteService|UpdateService|ReplaceService|CreateService)$/i, type: 'cloud_functions', level: 'medium', what: 'changed a Cloud Run service (functions run on these)' },
+  { re: /(Delete|Disable|Undelete|Reenable)DatabaseInstance$/i, type: 'cloud_access', level: 'high', what: 'changed the Realtime Database instance' }
 ];
+
+/* auditCanary changes a label on this topic every morning. Its audit log entry going through the
+   log sink to auditCloudLog shows the Google Cloud feed still works end to end. */
+const CANARY_TOPIC = 'security-canary';
+/** Whether an audit log entry is the morning test (not an alert). */
+function isCanary(entry) {
+  const p = entry && entry.protoPayload;
+  return !!(p && /Publisher\.UpdateTopic$/i.test(String(p.methodName || '')) && String(p.resourceName || '').endsWith('/topics/' + CANARY_TOPIC));
+}
 
 /** The alert for one audit log entry, or null. ownAccounts: principals whose deploys are routine
  * (the Firebase deploy service agents); their changes come out one level lower. */
@@ -255,6 +274,42 @@ function cloudLogAlert(entry, ownAccounts) {
   const level = routine && m.level === 'high' ? 'medium' : routine && m.level === 'medium' ? 'low' : m.level;
   return { type: m.type, level, who, method: clip(p.methodName, 120), resource, title: 'Google Cloud: ' + who + ' ' + m.what,
     detail: who + ' ' + m.what + (resource ? ' (' + resource + ')' : '') + ' with ' + p.methodName + (ip ? ' from IP ' + ip : '') + '.' };
+}
+
+// ---------------------------------------------------------------- sign-in tries Firebase saw
+
+/* Identity Platform's user activity log (turned on in this project) writes one entry per sign-in
+   request, including ones sent straight to Firebase's API that never went through the apps. The
+   docs don't spell out the entry's fields, so this looks in the usual places and keeps the first
+   few entries it sees in security_log/signin_log_samples to check against. */
+const FAIL_WORDS = /INVALID_PASSWORD|INVALID_LOGIN_CREDENTIALS|EMAIL_NOT_FOUND|USER_DISABLED|TOO_MANY_ATTEMPTS|INVALID_EMAIL|MISSING_PASSWORD/i;
+
+function findString(v, keys, depth) {
+  if (!isObj(v) || (depth || 0) > 4) return null;
+  for (const k of keys) if (typeof v[k] === 'string' && v[k]) return v[k];
+  for (const x of Object.values(v)) { const got = findString(x, keys, (depth || 0) + 1); if (got) return got; }
+  return null;
+}
+
+/** A failed password sign-in from one activity log entry: { email, ip, ua, code } or null (a sign-in
+ * that worked, another kind of request, or an entry this can't read). */
+function signInLogFailure(entry) {
+  if (!isObj(entry)) return null;
+  const p = entry.jsonPayload || entry.protoPayload || {};
+  if (!/SignInWithPassword$/i.test(String(p.methodName || ''))) return null;
+  const status = p.status || (p.response && p.response.error) || p.error || {};
+  const text = [status.message, status.code, p.errorMessage, isObj(p.response) ? JSON.stringify(p.response).slice(0, 2000) : ''].join(' ');
+  const word = (text.match(FAIL_WORDS) || [])[0];
+  const failed = !!word || (Number.isFinite(Number(status.code)) && Number(status.code) !== 0) || entry.severity === 'ERROR' || entry.severity === 'WARNING';
+  if (!failed) return null;
+  const req = p.request || {};
+  const meta = p.requestMetadata || {};
+  return {
+    email: clip(String(req.email || findString(p, ['email']) || '').trim().toLowerCase(), 200),
+    ip: clip(meta.callerIp || (entry.httpRequest && entry.httpRequest.remoteIp) || findString(p, ['callerIp', 'remoteIp']), 64),
+    ua: clip(meta.callerSuppliedUserAgent || (entry.httpRequest && entry.httpRequest.userAgent) || null),
+    code: clip(word || status.message || status.code || entry.severity || 'failed', 80)
+  };
 }
 
 // ---------------------------------------------------------------- spending budget
@@ -296,6 +351,9 @@ function githubAlert(event, body) {
       return a('github_access', 'medium', 'branch protection ' + (body.action || 'changed'), 'A branch protection rule was ' + clip(body.action, 20) + '.');
     case 'repository_ruleset':
       return a('github_access', 'medium', 'ruleset ' + (body.action || 'changed'), 'A ruleset was ' + clip(body.action, 20) + '.');
+    case 'meta':
+      // The webhook itself was deleted: GitHub stops telling us anything about this repository
+      return a('github_access', 'high', 'webhook deleted', 'The security webhook was deleted, so changes to this repository are no longer reported.');
     case 'page_build':
       if (body.build && body.build.status === 'errored') {
         return a('github_site', 'medium', 'site build failed', 'The GitHub Pages build failed: ' + clip(body.build.error && body.build.error.message, 200) + '.');
@@ -320,20 +378,30 @@ function githubAlert(event, body) {
 /** Watchers that should have run by now: name -> the longest gap allowed (ms). */
 const EXPECTED = {
   auditUserCensus: 2 * HOUR,       // every 30 minutes
-  auditRulesCheck: 3 * HOUR,       // every hour
+  auditRulesCheck: HOUR,           // every 10 minutes
   auditUsageCheck: 3 * HOUR,       // every hour
   auditBackup: 26 * HOUR,          // every day
-  auditPrune: 26 * HOUR            // every day
+  auditPrune: 26 * HOUR,           // every day
+  // The morning test (auditCanary, 7:30): the database watchers and the Google Cloud feed each
+  // got their test message. These only fail if that part of the watching is broken.
+  auditCanary: 26 * HOUR,
+  canaryWatch: 26 * HOUR,              // the database watcher on audit_canary
+  cloudFeed: 26 * HOUR,            // auditCloudLog saw the canary's audit log entry
+  auditGitHub: 7 * DAY             // some GitHub message (a push) at least once a week
+};
+/** What each heartbeat name means, for the alert. */
+const EXPECTED_WHAT = {
+  canaryWatch: 'database change watchers', cloudFeed: 'Google Cloud alert feed (log sink)', auditGitHub: 'GitHub webhooks (no message in 7 days)'
 };
 
 /** The watchers that haven't run when they should have: [{ name, last }]. last: { name: time }. */
 function heartbeatProblems(last, now) {
   return Object.entries(EXPECTED)
     .filter(([name, gap]) => !(last && Number.isFinite(last[name]) && now - last[name] <= gap))
-    .map(([name]) => ({ name, last: last && Number.isFinite(last[name]) ? last[name] : null }));
+    .map(([name]) => ({ name, what: EXPECTED_WHAT[name] || null, last: last && Number.isFinite(last[name]) ? last[name] : null }));
 }
 
 module.exports = {
   HOUR, DAY, suspiciousValues, parseRules, rulesDiff, rulesLoosened, localHour, networkOf, signInOddities,
-  shiftAlerts, usageSpike, cloudLogAlert, budgetAlert, githubAlert, EXPECTED, heartbeatProblems
+  shiftAlerts, usageSpike, cloudLogAlert, CANARY_TOPIC, isCanary, signInLogFailure, budgetAlert, githubAlert, EXPECTED, heartbeatProblems
 };

@@ -14,6 +14,22 @@ const { pipeline } = require('stream/promises');
 
 const BUCKET = 'eandccourier-36fcc-default-rtdb-backups';
 const FOLDER = 'daily';
+/* A second copy goes to a bucket in a separate Google Cloud project (made by
+   scripts/setup-security-fixes.sh), so whoever can delete things in this project can't also delete
+   every backup. The functions may only add files there. daily/ copies are kept 90 days; the copy
+   made on the 1st of each month also goes to monthly/, which is never deleted (Justin keeps all
+   time clock and Request Pickup records). */
+const VAULT_BUCKET = 'eandccourier-36fcc-backup-vault';
+
+/** Where the off-site copies of one backup go: [{ from, to }]. */
+function vaultCopies(names, at) {
+  const out = [];
+  for (const from of [names.data, names.rules]) {
+    out.push({ from, to: from });
+    if (new Date(at + -5 * 3600 * 1000).getUTCDate() === 1) out.push({ from, to: from.replace(FOLDER + '/', 'monthly/') });
+  }
+  return out;
+}
 
 /** The two file names for a backup started at `at`, in the style Firebase uses. */
 function backupNames(at) {
@@ -35,11 +51,13 @@ function backupNames(at) {
 async function makeBackup(io, at) {
   const names = backupNames(at);
   let dataBytes = 0;
+  let rawBytes = 0;  // the download itself, before gzip (auditUsageCheck leaves it out of the download alarm)
+  const raw = new Transform({ transform(chunk, enc, done) { rawBytes += chunk.length; done(null, chunk); } });
   const count = new Transform({ transform(chunk, enc, done) { dataBytes += chunk.length; done(null, chunk); } });
-  await pipeline(await io.openData(), zlib.createGzip(), count, io.openSave(names.data));
+  await pipeline(await io.openData(), raw, zlib.createGzip(), count, io.openSave(names.data));
   const rules = zlib.gzipSync(Buffer.from(String(await io.readRules()), 'utf8'));
   await pipeline(Readable.from([rules]), io.openSave(names.rules));
-  return { names, dataBytes, rulesBytes: rules.length };
+  return { names, dataBytes, rawBytes, rulesBytes: rules.length };
 }
 
-module.exports = { BUCKET, FOLDER, backupNames, makeBackup };
+module.exports = { BUCKET, FOLDER, VAULT_BUCKET, backupNames, vaultCopies, makeBackup };

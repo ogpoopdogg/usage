@@ -1,7 +1,9 @@
 /* E&C security log – server code for the Security section of the usage page.
 
    Everything here only writes to security_log (layout in lib.js). Nothing is ever refused or
-   changed: a fault in this code must never stop anyone signing in or saving their work.
+   changed: a fault in this code must never stop anyone signing in or saving their work. The one
+   exception is auditBeforeEmail, which refuses password reset and sign-in link emails to @ec.com
+   addresses (ec.com is someone else's domain, so those emails would go to a stranger).
 
    Sign-ins
    - auditSignInReport: the apps send failed and refused sign-ins here (wrong password, not on
@@ -48,7 +50,7 @@ const { onRequest } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { onMessagePublished } = require('firebase-functions/v2/pubsub');
 const { defineSecret } = require('firebase-functions/params');
-const { beforeUserSignedIn, beforeEmailSent, beforeSmsSent } = require('firebase-functions/v2/identity');
+const { beforeUserSignedIn, beforeEmailSent, beforeSmsSent, HttpsError } = require('firebase-functions/v2/identity');
 const functionsV1 = require('firebase-functions/v1');
 const logger = require('firebase-functions/logger');
 const admin = require('firebase-admin');
@@ -242,8 +244,28 @@ async function logAuthMessage(type, event) {
   await Promise.all([log('events').push(L.authEventEntry(type, event, at)), tally(type, at)]);
 }
 
+/* The staff sign-ins are @ec.com addresses, but ec.com is a real domain that belongs to someone
+   else (registered 1997, registrant in Beijing). A password reset or sign-in link sent to
+   justin@ec.com would go to that domain's mail server, and the link sets a new password. So these
+   emails are never sent to @ec.com: an admin sets staff passwords instead (README, "Staff
+   passwords"). Every attempt raises a high alert. */
+function emailTarget(event) {
+  return L.normEmail((event && event.data && event.data.email) || (event && event.additionalUserInfo && event.additionalUserInfo.email));
+}
+
 exports.auditBeforeEmail = beforeEmailSent({ region: REGION, memory: MEMORY }, async (event) => {
-  try { await within(BLOCKING_BUDGET, logAuthMessage('email_sent', event)); } catch (e) { logger.error('Email not logged', e); }
+  const email = emailTarget(event);
+  const staff = /@ec\.com$/.test(email);
+  try { await within(BLOCKING_BUDGET, logAuthMessage(staff ? 'email_blocked' : 'email_sent', event)); } catch (e) { logger.error('Email not logged', e); }
+  if (!staff) return;
+  const at = Date.now();
+  const kind = event.emailType === 'EMAIL_SIGN_IN' ? 'sign-in link' : 'password reset';
+  try {
+    await within(BLOCKING_BUDGET, raise({ type: 'reset_blocked', level: 'high', title: 'Blocked a ' + kind + ' email to ' + email,
+      detail: 'Someone asked Firebase to email a ' + kind + ' to ' + email + ' from IP ' + (event.ipAddress || 'unknown') + ' (' + L.deviceName(event.userAgent) +
+        '). It was not sent: ec.com belongs to someone else. If this wasn\u2019t you or another admin, someone may be trying to take over that account.' }, 'email', at));
+  } catch (e) { logger.error('Blocked email alert not saved', e); }
+  throw new HttpsError('permission-denied', 'E&C staff passwords are reset by an admin.');
 });
 
 exports.auditBeforeSms = beforeSmsSent({ region: REGION, memory: MEMORY }, async (event) => {
@@ -366,7 +388,8 @@ function watcher(watch) {
     const jobs = [log('changes').push(entry), tally(watch.name, at)];
     const alerts = L.changeAlerts(entry, watch, { staff: person ? person.staff : null, adminEmail: !!(person && L.ADMIN_EMAILS.includes(person.email)) });
     const who = entry.by.email || entry.by.uid || (entry.by.type === 'admin' ? 'Server code or the console' : 'An unknown writer');
-    const odd = W.suspiciousValues(event.data.before.val(), event.data.after.val());
+    // Rich text (developer notes) is long when a picture is pasted in; the other patterns still apply
+    const odd = W.suspiciousValues(event.data.before.val(), event.data.after.val()).filter((o) => !(watch.richText && /^very long text/.test(o.why)));
     if (odd.length) {
       alerts.push({ type: 'injection', level: 'high', title: 'Possible code hidden in ' + watch.area,
         detail: who + ' saved ' + entry.path + ' with ' + odd.map((o) => o.why + ' in ' + o.f + (o.sample ? ': ' + JSON.stringify(o.sample) : '')).join('; ') });
@@ -473,6 +496,7 @@ async function pushToPhones({ title, body, tag, data }) {
 
 exports.auditAlertPush = onValueCreated({ ref: '/' + LOG + '/alerts/{id}', region: REGION, memory: MEMORY, maxInstances: 5 }, async (event) => {
   const alert = event.data.val() || {};
+  if (alert.type === 'alerts_muted') return;  // auditNotifyChange already sent it to the phones
   const notify = (await log('notify').once('value')).val();
   if (!AT.wantsPush(alert, notify)) return;
   const at = Date.now();
@@ -544,7 +568,7 @@ exports.auditPrune = onSchedule({ schedule: 'every day 03:30', timeZone: 'Americ
   if (Object.keys(acks).length) await log('acks').update(Object.fromEntries(Object.keys(acks).map((k) => [k, null])));
   // Counters are kept in time buckets (bucket = time / window); drop old buckets
   const counters = (await log('counters').once('value')).val() || {};
-  const windows = { failed_email: FAIL_WINDOW, failed_ip: FAIL_WINDOW, reports: REPORT_WINDOW, deletes: DELETE_WINDOW, ingest_refused: REPORT_WINDOW, github_refused: REPORT_WINDOW, cloud: REPORT_WINDOW };
+  const windows = { failed_email: FAIL_WINDOW, failed_ip: FAIL_WINDOW, reports: REPORT_WINDOW, deletes: DELETE_WINDOW, failed_log_email: FAIL_WINDOW, failed_log_ip: FAIL_WINDOW, ingest_refused: REPORT_WINDOW, github_refused: REPORT_WINDOW, cloud: REPORT_WINDOW };
   const updates = {};
   for (const [kind, buckets] of Object.entries(counters)) {
     const ms = windows[kind];
@@ -586,14 +610,30 @@ exports.auditBackup = onSchedule({ schedule: 'every day 19:00', timeZone: 'Ameri
       },
       openSave: (name) => getStorage().bucket(BK.BUCKET).file(name).createWriteStream({ resumable: false, contentType: 'application/gzip' })
     }, at);
-    await tally('auditBackup', at);
+    await Promise.all([tally('auditBackup', at), log('backup_bytes/' + String(Math.floor(at / W.HOUR) * W.HOUR)).set(res.rawBytes)]);
     logger.info('Database backed up', res);
+    await copyToVault(res.names, at);
   } catch (err) {
     logger.error('Database backup failed', { message: err && err.message });
     await raise({ type: 'backup_failed', level: 'high', title: 'Daily database backup failed', detail: String((err && err.message) || err) }, 'backup', at);
     throw err;
   }
 });
+
+/** The off-site copy (backup.js VAULT_BUCKET). A failure here raises its own alert; the main backup
+ *  is already saved, so the function still counts as having run. */
+async function copyToVault(names, at) {
+  try {
+    const src = getStorage().bucket(BK.BUCKET);
+    const dest = getStorage().bucket(BK.VAULT_BUCKET);
+    for (const c of BK.vaultCopies(names, at)) await src.file(c.from).copy(dest.file(c.to));
+    await tally('auditBackupVault', at);
+  } catch (err) {
+    logger.error('Off-site backup copy failed', { message: err && err.message });
+    await raise({ type: 'backup_vault_failed', level: 'high', title: 'Off-site backup copy failed',
+      detail: 'Tonight\u2019s backup was saved in the main bucket but not copied to ' + BK.VAULT_BUCKET + ': ' + String((err && err.message) || err).slice(0, 300) }, 'backup', at);
+  }
+}
 
 // ---------------------------------------------------------------- extra watches (see watch.js)
 
@@ -620,10 +660,10 @@ async function readRules() {
   return r.text();
 }
 
-// Every hour: the rules compared with the last copy (security_log/rules_watch). The rules live only
-// in the Firebase console, so this is the only way to know they were changed, by whom is in the
-// Google Cloud alerts if the log sink is set up.
-exports.auditRulesCheck = onSchedule({ schedule: 'every 60 minutes', region: REGION, memory: MEMORY, timeoutSeconds: 120 }, async () => {
+// Every 10 minutes: the rules compared with the last copy (security_log/rules_watch). The rules live
+// only in the Firebase console, so this is the only way to know they were changed. Every 10 minutes
+// (not hourly) so a rule opened and closed again quickly is still caught. Each run reads about 65 KB.
+exports.auditRulesCheck = onSchedule({ schedule: 'every 10 minutes', region: REGION, memory: MEMORY, timeoutSeconds: 120 }, async () => {
   const at = Date.now();
   const text = await readRules();
   const h = L.hash(text);
@@ -670,14 +710,19 @@ exports.auditUsageCheck = onSchedule({ schedule: 'every 60 minutes', region: REG
   let bytes = 0;
   for (const ts of body.timeSeries || []) for (const p of ts.points || []) bytes += Number(p.value && (p.value.int64Value || p.value.doubleValue)) || 0;
   const key = String(start);
+  // The nightly backup downloads the whole database once; that isn't a stranger copying it.
+  const backupBytes = Number((await log('backup_bytes/' + key).once('value')).val()) || 0;
+  bytes = Math.max(0, bytes - backupBytes);
   const usage = log('usage');
   const past = (await usage.orderByKey().startAt(String(start - 8 * W.DAY)).once('value')).val() || {};
   delete past[key];
   const spike = (await log('usage_alerted/' + key).once('value')).exists() ? null : W.usageSpike(bytes, Object.values(past));
   const old = Object.keys(past).filter((k) => Number(k) < start - 8 * W.DAY);
+  const oldBackups = Object.keys((await log('backup_bytes').orderByKey().endAt(String(start - 8 * W.DAY)).once('value')).val() || {});
   await Promise.all([
     usage.child(key).set(bytes),
     old.length ? usage.update(Object.fromEntries(old.map((k) => [k, null]))) : null,
+    oldBackups.length ? log('backup_bytes').update(Object.fromEntries(oldBackups.map((k) => [k, null]))) : null,
     spike ? raise(spike, 'usage', at) : null,
     spike ? log('usage_alerted/' + key).set(true) : null
   ]);
@@ -690,6 +735,11 @@ const CLOUD_TOPIC = 'security-cloud-log';
 exports.auditCloudLog = onMessagePublished({ topic: CLOUD_TOPIC, region: REGION, memory: MEMORY, maxInstances: 3 }, async (event) => {
   const at = Date.now();
   const entry = event.data && event.data.message && event.data.message.json;
+  if (W.isCanary(entry)) {
+    // The morning test came through the log sink: the feed works. Not an alert, not a change.
+    await Promise.all([log('last/cloudFeed').set(at), tally('auditCloudLog', at)]);
+    return;
+  }
   const pn = await projectNumber();
   const routine = [pn && pn + '-compute@developer.gserviceaccount.com', pn && 'service-' + pn + '@gcf-admin-robot.iam.gserviceaccount.com',
     pn && pn + '@cloudbuild.gserviceaccount.com', pn && pn + '@cloudservices.gserviceaccount.com'].filter(Boolean);
@@ -770,10 +820,82 @@ exports.auditHeartbeat = onSchedule({ schedule: 'every day 08:00', timeZone: 'Am
   await log('heartbeat').set({ at, ok: !problems.length, problems, highAlerts24h: open });
   if (problems.length) {
     await raise({ type: 'watch_stopped', level: 'high', title: problems.length + ' watcher(s) stopped running',
-      detail: problems.map((p) => p.name + ' (last ran ' + (p.last ? new Date(p.last).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : 'never') + ')').join(', ') + '. Check Functions → Logs in the Firebase console.' }, 'heartbeat', at);
+      detail: problems.map((p) => p.name + (p.what ? ' = ' + p.what : '') + ' (last ran ' + (p.last ? new Date(p.last).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : 'never') + ')').join(', ') + '. Check Functions → Logs in the Firebase console.' }, 'heartbeat', at);
   } else if (AT.wantsPush({ type: 'heartbeat' }, notify)) {
     await pushToPhones({ title: 'Security: all OK', body: 'Every watcher ran, and last night’s backup saved.' + (open ? ' ' + open + ' high alert(s) in the last 24 hours.' : ' No high alerts in the last 24 hours.'),
       tag: 'heartbeat', data: { type: 'heartbeat' } });
   }
   await tally('auditHeartbeat', at);
+});
+
+// ---------------------------------------------------------------- added 2026-11-04
+
+// The morning test, half an hour before the heartbeat: one write the database watchers must see
+// (audit_canary/ping, watcher "canaryWatch", function auditCanaryWatch), and one harmless Google Cloud change (a label on the topic
+// security-canary) the log sink must pass to auditCloudLog ("cloudFeed"). If either never arrives,
+// the 8 AM heartbeat raises "watcher stopped" instead of a quiet day looking normal.
+exports.auditCanary = onSchedule({ schedule: 'every day 07:30', timeZone: 'America/Winnipeg', region: REGION, memory: MEMORY, timeoutSeconds: 60 }, async () => {
+  const at = Date.now();
+  await db().ref('audit_canary/ping').set(at);
+  const topic = 'projects/' + projectId() + '/topics/' + W.CANARY_TOPIC;
+  const r = await fetch('https://pubsub.googleapis.com/v1/' + topic, {
+    method: 'PATCH',
+    headers: { Authorization: 'Bearer ' + await googleToken(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ topic: { name: topic, labels: { canary: String(at) } }, updateMask: 'labels' })
+  });
+  if (!r.ok) logger.error('Canary topic not updated', { status: r.status, body: (await r.text()).slice(0, 300) });
+  await tally('auditCanary', at);
+});
+
+// Failed password sign-ins from Identity Platform's own activity log (log sink security-signin-log,
+// README "Password guessing"). Unlike auditSignInReport this sees tries that skip the apps.
+const SIGNIN_TOPIC = 'security-signin-log';
+const GUESS_EMAIL = 5;     // failed tries for one email in 15 minutes
+const GUESS_IP = 10;       // ... or from one IP
+const SAMPLES = 5;         // first entries kept as they came, to check the fields this reads
+exports.auditSignInLog = onMessagePublished({ topic: SIGNIN_TOPIC, region: REGION, memory: MEMORY, maxInstances: 3 }, async (event) => {
+  const at = Date.now();
+  const entry = event.data && event.data.message && event.data.message.json;
+  const samples = log('signin_log_samples');
+  if ((await samples.once('value')).numChildren() < SAMPLES) await samples.push({ at, entry: L.keepValue(entry) });
+  const f = W.signInLogFailure(entry);
+  if (!f) { await tally('auditSignInLog', at); return; }
+  await log('events').push({ at, type: 'signin_failed', ok: false, app: 'firebase', via: 'firebase-log', email: f.email, ip: f.ip, ua: f.ua, code: f.code,
+    staff: /@ec\.com$/.test(f.email || '') });
+  const b = L.bucket(at, FAIL_WINDOW);
+  const jobs = [];
+  if (f.email) {
+    jobs.push(count('failed_log_email/' + b + '/' + L.safeKey(f.email)).then((n) => n === GUESS_EMAIL && raise({ type: 'signin_guessing', level: 'high',
+      title: 'Password guessing on ' + f.email, detail: n + ' failed password tries for ' + f.email + ' in 15 minutes in Firebase\u2019s own log (latest from IP ' + (f.ip || 'unknown') + ', ' + L.deviceName(f.ua) + ').' }, 'signin', at)));
+  }
+  if (f.ip) {
+    jobs.push(count('failed_log_ip/' + b + '/' + L.safeKey(f.ip)).then((n) => n === GUESS_IP && raise({ type: 'signin_guessing', level: 'high',
+      title: 'Password guessing from one place', detail: n + ' failed password tries from IP ' + f.ip + ' in 15 minutes in Firebase\u2019s own log (latest for ' + (f.email || 'no email') + ').' }, 'signin', at)));
+  }
+  await Promise.all(jobs);
+  await tally('auditSignInLog', at);
+});
+
+// Phone notifications turned off, or a kind unticked: always tell the phones, whatever the new
+// settings say, so someone in the admin's account can't quietly mute the alarms.
+exports.auditNotifyChange = onValueWritten({ ref: '/' + LOG + '/notify', region: REGION, memory: MEMORY, maxInstances: 2 }, async (event) => {
+  const before = event.data.before.val() || {};
+  const after = event.data.after.val() || {};
+  const at = Date.now();
+  const off = [];
+  if (before.on !== false && after.on === false) off.push('all phone notifications');
+  for (const [t, v] of Object.entries(after.types || {})) {
+    const was = before.types && typeof before.types[t] === 'boolean' ? before.types[t] : (AT.TYPES[t] ? AT.TYPES[t].on : true);
+    if (was && v === false) off.push(AT.TYPES[t] ? AT.TYPES[t].label : t);
+  }
+  if (!event.data.after.exists()) off.push('all alert settings (deleted)');
+  const who = event.authType === 'app_user' && event.authId ? (await personOf(event.authId)).email || event.authId : (event.authType === 'admin' ? 'Server code or the console' : event.authType || 'unknown');
+  await log('changes').push({ at, area: 'Alert settings', watch: 'notify', path: LOG + '/notify', action: L.actionOf(event.data.before.val(), event.data.after.val()),
+    by: { type: L.clip(event.authType || 'unknown', 20), uid: L.clip(event.authId || null, 128), email: who }, fields: L.diffFields(before, after), n: 1, before: L.keepValue(before), after: L.keepValue(after) });
+  if (off.length) {
+    const detail = who + ' turned off: ' + off.join(', ') + '. If this wasn\u2019t you, someone is in the admin account.';
+    await raise({ type: 'alerts_muted', level: 'high', title: 'Security alerts turned off', detail }, 'notify', at);
+    await pushToPhones({ title: 'High: Security alerts turned off', body: detail, tag: 'alerts-muted', data: { type: 'alerts_muted' } });
+  }
+  await tally('auditNotifyChange', at);
 });
