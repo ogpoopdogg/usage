@@ -173,7 +173,7 @@ function deviceName(ua) {
 }
 /** The key a device is remembered by: the browser and system, not the version or IP (those change often). */
 /** Change-log entries (key -> entry) that auditPrune deletes now: past their watcher's keepDays, or
- *  past defaultDays for the rest. Watchers with keepForever (the time clock) are never deleted. */
+ *  past defaultDays for the rest. Watchers with keepForever (time clock, Request Pickup) are never deleted. */
 function changeDrops(entries, now, defaultDays) {
   const byName = Object.fromEntries(WATCHES.map((w) => [w.name, w]));
   const DAY_MS = 24 * 60 * 60 * 1000;
@@ -195,8 +195,8 @@ function deviceKey(ua) { return hash(deviceName(ua)); }
  * What the watchers look at. path: the trigger path; area: the name the page shows; level: the alert
  * any change raises (null = none); staffOnly: only staff accounts should ever write here;
  * keepDays: everyday app activity whose log entries are kept that many days instead of the usual 90
- * (auditPrune); keepForever: entries never deleted (the time clock: Justin wants every employee
- * time clock record kept). Alerts are raised the same either way.
+ * (auditPrune); keepForever: entries never deleted (the time clock and Request Pickup: Justin
+ * wants all employee time clock and pickup customer records kept). Alerts are raised the same either way.
  * Busy data that changes many times a minute is left out on purpose (see README): live driver
  * positions (developer/dispatch_dashboard/drivers, poll_state), API counters
  * (developer/api_usage), the request counter, and the apps' own logs (timeclock/audit, garage/history).
@@ -206,10 +206,10 @@ const WATCHES = [
   { name: 'staff', path: 'staff/{uid}', area: 'Staff list', level: 'high' },
   { name: 'roles', path: 'roles/{user}', area: 'Roles', level: 'high' },
   { name: 'jobs', path: 'jobs/{id}', area: 'Jobs', staffOnly: true },
-  { name: 'requests', path: 'requests/{id}', area: 'Pickup requests' },
-  { name: 'companies', path: 'companies/{cid}', area: 'Companies' },
-  { name: 'joinCodes', path: 'join_codes/{code}', area: 'Join codes' },
-  { name: 'users', path: 'users/{uid}', area: 'Customer profiles' },
+  { name: 'requests', path: 'requests/{id}', area: 'Pickup requests', keepForever: true },
+  { name: 'companies', path: 'companies/{cid}', area: 'Companies', keepForever: true },
+  { name: 'joinCodes', path: 'join_codes/{code}', area: 'Join codes', keepForever: true },
+  { name: 'users', path: 'users/{uid}', area: 'Customer profiles', keepForever: true },
   { name: 'pushTokens', path: 'push_tokens/{uid}', area: 'Dispatch phones', keepDays: 14 },
   { name: 'allowedUsers', path: 'developer/dispatch_dashboard/allowed_users', area: 'RouteWatcher allowed users', level: 'high', staffOnly: true },
   { name: 'masterConfig', path: 'developer/dispatch_dashboard/master_config', area: 'RouteWatcher settings', level: 'medium', staffOnly: true },
