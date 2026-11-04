@@ -256,3 +256,26 @@ test('PlutoScan alerts get a pluto_ kind', () => {
   const c = L.ingestEntry(send({ kind: 'alerts', entry: { level: 'high', title: 'from before kinds' } }), 'plutoscan', AT);
   assert.equal(c.entry.type, 'pluto_other');
 });
+
+test('the change log keeps everyday areas 14 days, the time clock and Request Pickup forever, the rest 90 days', () => {
+  const now = Date.UTC(2026, 10, 4, 12);
+  const d = 24 * 60 * 60 * 1000;
+  const entries = {
+    a: { watch: 'routePlanner', at: now - 15 * d },   // past 14 days: dropped
+    b: { watch: 'routePlanner', at: now - 13 * d },   // still kept
+    c: { watch: 'sessions', at: now - 20 * d },       // dropped
+    d: { watch: 'staff', at: now - 60 * d },          // normal area, under 90 days: kept
+    e: { watch: 'staff', at: now - 91 * d },          // normal area, over 90 days: dropped
+    f: { watch: 'pushTokens', at: now - 14 * d - 1 }, // dropped
+    g: { watch: 'tcShifts', at: now - 400 * d },      // time clock: never dropped
+    h: { watch: 'tcEmployees', at: now - 400 * d },
+    i: { watch: 'rules', at: now - 91 * d },          // entries from other watches follow the 90 days
+    k: { watch: 'requests', at: now - 400 * d },      // Request Pickup: never dropped
+    l: { watch: 'users', at: now - 400 * d },
+    j: null
+  };
+  assert.deepEqual(L.changeDrops(entries, now, 90).sort(), ['a', 'c', 'e', 'f', 'i']);
+  assert.deepEqual(L.WATCHES.filter((w) => w.keepDays).map((w) => w.name).sort(), ['nicknames', 'pushTokens', 'routePlanner', 'sessions']);
+  const pickup = ['requests', 'companies', 'joinCodes', 'users'];
+  for (const w of L.WATCHES) assert.equal(!!w.keepForever, w.name.startsWith('tc') || pickup.includes(w.name), w.name);
+});

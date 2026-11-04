@@ -510,11 +510,33 @@ async function dropOlder(path, age, now) {
   }
 }
 
+/** Deletes change-log entries past their keep time (lib.js changeDrops: 90 days, 14 for everyday
+ *  areas, never for the time clock). Reads the log oldest first, a page at a time, up to the
+ *  shortest cutoff. */
+async function dropChanges(now) {
+  const days = L.WATCHES.filter((w) => w.keepDays).map((w) => w.keepDays);
+  const cutoff = L.pushIdAt(now - Math.min(KEEP_EVENTS / DAY, ...days) * DAY);
+  let total = 0;
+  let after = null;
+  for (;;) {
+    let q = log('changes').orderByKey().endAt(cutoff);
+    q = after ? q.startAfter(after) : q;
+    const page = (await q.limitToFirst(1000).once('value')).val() || {};
+    const keys = Object.keys(page);
+    if (!keys.length) return total;
+    const drop = L.changeDrops(page, now, KEEP_EVENTS / DAY);
+    if (drop.length) await log('changes').update(Object.fromEntries(drop.map((k) => [k, null])));
+    total += drop.length;
+    if (keys.length < 1000) return total;
+    after = keys.sort().pop();
+  }
+}
+
 exports.auditPrune = onSchedule({ schedule: 'every day 03:30', timeZone: 'America/Chicago', region: REGION, memory: MEMORY, timeoutSeconds: 540 }, async () => {
   const now = Date.now();
   const removed = {
     events: await dropOlder('events', KEEP_EVENTS, now),
-    changes: await dropOlder('changes', KEEP_EVENTS, now),
+    changes: await dropChanges(now),
     alerts: await dropOlder('alerts', KEEP_ALERTS, now)
   };
   // Acks for alerts that are gone
