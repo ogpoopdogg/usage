@@ -540,7 +540,11 @@ exports.auditPrune = onSchedule({ schedule: 'every day 03:30', timeZone: 'Americ
 
 // 7:00 PM in Brandon, after the working day. The function's service account needs
 // Storage Object Creator on the bucket (README, "Daily backup").
-exports.auditBackup = onSchedule({ schedule: 'every day 19:00', timeZone: 'America/Winnipeg', region: REGION, memory: MEMORY, timeoutSeconds: 300 }, async () => {
+// It holds the whole database in memory at once, so it gets more than the other watchers: on
+// 2026-11-03 it ran out at 256 MiB (278 MiB used) when the gzipped copy reached about 1 MB, and was
+// killed before it could raise its own alert.
+const BACKUP_MEMORY = '1GiB';
+exports.auditBackup = onSchedule({ schedule: 'every day 19:00', timeZone: 'America/Winnipeg', region: REGION, memory: BACKUP_MEMORY, timeoutSeconds: 300 }, async () => {
   const at = Date.now();
   const dbUrl = db().ref().toString().replace(/\/$/, '');
   try {
