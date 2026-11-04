@@ -9,6 +9,8 @@
 'use strict';
 
 const zlib = require('zlib');
+const { Readable, Transform } = require('stream');
+const { pipeline } = require('stream/promises');
 
 const BUCKET = 'eandccourier-36fcc-default-rtdb-backups';
 const FOLDER = 'daily';
@@ -23,19 +25,21 @@ function backupNames(at) {
 }
 
 /**
- * Makes one backup. io supplies the Firebase calls:
- *   readData()        -> the whole database as a JSON-ready value
+ * Makes one backup. The data is streamed (download -> gzip -> bucket) and never held in memory
+ * whole, so memory use stays flat however big the database gets. io supplies the Firebase calls:
+ *   openData()        -> a readable stream of the whole database as JSON text
  *   readRules()       -> the rules as text
- *   save(name, buf)   -> writes a gzipped file to the bucket
+ *   openSave(name)    -> a writable stream into a new gzipped file in the bucket
  * Returns the sizes saved. Throws if either file couldn't be made or saved.
  */
 async function makeBackup(io, at) {
   const names = backupNames(at);
-  const data = zlib.gzipSync(Buffer.from(JSON.stringify(await io.readData()), 'utf8'));
+  let dataBytes = 0;
+  const count = new Transform({ transform(chunk, enc, done) { dataBytes += chunk.length; done(null, chunk); } });
+  await pipeline(await io.openData(), zlib.createGzip(), count, io.openSave(names.data));
   const rules = zlib.gzipSync(Buffer.from(String(await io.readRules()), 'utf8'));
-  await io.save(names.data, data);
-  await io.save(names.rules, rules);
-  return { names, dataBytes: data.length, rulesBytes: rules.length };
+  await pipeline(Readable.from([rules]), io.openSave(names.rules));
+  return { names, dataBytes, rulesBytes: rules.length };
 }
 
 module.exports = { BUCKET, FOLDER, backupNames, makeBackup };
