@@ -257,18 +257,22 @@ test('PlutoScan alerts get a pluto_ kind', () => {
   assert.equal(c.entry.type, 'pluto_other');
 });
 
-test('everyday areas are dropped from the change log after their shorter keep time', () => {
+test('the change log keeps everyday areas 14 days, the time clock forever, the rest 90 days', () => {
   const now = Date.UTC(2026, 10, 4, 12);
   const d = 24 * 60 * 60 * 1000;
   const entries = {
     a: { watch: 'routePlanner', at: now - 15 * d },   // past 14 days: dropped
     b: { watch: 'routePlanner', at: now - 13 * d },   // still kept
     c: { watch: 'sessions', at: now - 20 * d },       // dropped
-    d: { watch: 'staff', at: now - 60 * d },          // normal area: left for the 90-day cleanup
-    e: { watch: 'tcShifts', at: now - 30 * d },       // punches keep 90 days
+    d: { watch: 'staff', at: now - 60 * d },          // normal area, under 90 days: kept
+    e: { watch: 'staff', at: now - 91 * d },          // normal area, over 90 days: dropped
     f: { watch: 'pushTokens', at: now - 14 * d - 1 }, // dropped
-    g: null
+    g: { watch: 'tcShifts', at: now - 400 * d },      // time clock: never dropped
+    h: { watch: 'tcEmployees', at: now - 400 * d },
+    i: { watch: 'rules', at: now - 91 * d },          // entries from other watches follow the 90 days
+    j: null
   };
-  assert.deepEqual(L.shortKeepDrops(entries, now).sort(), ['a', 'c', 'f']);
+  assert.deepEqual(L.changeDrops(entries, now, 90).sort(), ['a', 'c', 'e', 'f', 'i']);
   assert.deepEqual(L.WATCHES.filter((w) => w.keepDays).map((w) => w.name).sort(), ['nicknames', 'pushTokens', 'routePlanner', 'sessions']);
+  for (const w of L.WATCHES) assert.equal(!!w.keepForever, w.name.startsWith('tc'), w.name);
 });

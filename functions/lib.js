@@ -172,12 +172,18 @@ function deviceName(ua) {
   return os ? browser + ' on ' + os : browser;
 }
 /** The key a device is remembered by: the browser and system, not the version or IP (those change often). */
-/** Log entries (key -> entry) whose watcher keeps them a short time and that are older than its
- *  keepDays: the keys auditPrune deletes. */
-function shortKeepDrops(entries, now) {
-  const days = Object.fromEntries(WATCHES.filter((w) => w.keepDays).map((w) => [w.name, w.keepDays]));
+/** Change-log entries (key -> entry) that auditPrune deletes now: past their watcher's keepDays, or
+ *  past defaultDays for the rest. Watchers with keepForever (the time clock) are never deleted. */
+function changeDrops(entries, now, defaultDays) {
+  const byName = Object.fromEntries(WATCHES.map((w) => [w.name, w]));
+  const DAY_MS = 24 * 60 * 60 * 1000;
   return Object.entries(entries || {})
-    .filter(([, e]) => e && days[e.watch] && Number(e.at) < now - days[e.watch] * 24 * 60 * 60 * 1000)
+    .filter(([, e]) => {
+      if (!e) return false;
+      const w = byName[e.watch] || {};
+      if (w.keepForever) return false;
+      return Number(e.at) < now - (w.keepDays || defaultDays) * DAY_MS;
+    })
     .map(([k]) => k);
 }
 
@@ -189,7 +195,8 @@ function deviceKey(ua) { return hash(deviceName(ua)); }
  * What the watchers look at. path: the trigger path; area: the name the page shows; level: the alert
  * any change raises (null = none); staffOnly: only staff accounts should ever write here;
  * keepDays: everyday app activity whose log entries are kept that many days instead of the usual 90
- * (auditPrune). Alerts are raised the same either way.
+ * (auditPrune); keepForever: entries never deleted (the time clock: Justin wants every employee
+ * time clock record kept). Alerts are raised the same either way.
  * Busy data that changes many times a minute is left out on purpose (see README): live driver
  * positions (developer/dispatch_dashboard/drivers, poll_state), API counters
  * (developer/api_usage), the request counter, and the apps' own logs (timeclock/audit, garage/history).
@@ -209,14 +216,14 @@ const WATCHES = [
   { name: 'nicknames', path: 'developer/dispatch_dashboard/driver_nicknames/{gpsId}', area: 'Driver nicknames', keepDays: 14 },
   { name: 'sessions', path: 'developer/dispatch_dashboard/active_sessions/{uid}', area: 'RouteWatcher sign-in locks', staffOnly: true, quiet: true, keepDays: 14 },
   { name: 'routePlanner', path: 'developer/route_planner/{section}/{id}', area: 'Route planner', staffOnly: true, skip: ['ui_prefs', 'notification_reads'], keepDays: 14 },
-  { name: 'tcEmployees', path: 'timeclock/employees/{ek}', area: 'Time clock employees', level: 'high' },
-  { name: 'tcSettings', path: 'timeclock/settings', area: 'Time clock settings', level: 'medium' },
-  { name: 'tcShifts', path: 'timeclock/shifts/{ek}/{shiftId}', area: 'Time clock punches' },
-  { name: 'tcRequests', path: 'timeclock/requests/{ek}/{id}', area: 'Punch fix requests' },
-  { name: 'tcVanReports', path: 'timeclock/van_reports/{id}', area: 'Van problem reports' },
-  { name: 'tcVans', path: 'timeclock/vans/{id}', area: 'Vans' },
-  { name: 'tcOilPlan', path: 'timeclock/oil_plan', area: 'Oil check schedule' },
-  { name: 'tcVehicleClaims', path: 'timeclock/vehicle_claims/{gpsId}', area: 'Van picks' },
+  { name: 'tcEmployees', path: 'timeclock/employees/{ek}', area: 'Time clock employees', level: 'high', keepForever: true },
+  { name: 'tcSettings', path: 'timeclock/settings', area: 'Time clock settings', level: 'medium', keepForever: true },
+  { name: 'tcShifts', path: 'timeclock/shifts/{ek}/{shiftId}', area: 'Time clock punches', keepForever: true },
+  { name: 'tcRequests', path: 'timeclock/requests/{ek}/{id}', area: 'Punch fix requests', keepForever: true },
+  { name: 'tcVanReports', path: 'timeclock/van_reports/{id}', area: 'Van problem reports', keepForever: true },
+  { name: 'tcVans', path: 'timeclock/vans/{id}', area: 'Vans', keepForever: true },
+  { name: 'tcOilPlan', path: 'timeclock/oil_plan', area: 'Oil check schedule', keepForever: true },
+  { name: 'tcVehicleClaims', path: 'timeclock/vehicle_claims/{gpsId}', area: 'Van picks', keepForever: true },
   { name: 'garage', path: 'garage/{section}/{id}', area: 'Garage', skip: ['history'] },
   { name: 'dispatchContacts', path: 'dispatch_contacts/{section}/{id}', area: 'Dispatch drivers list', staffOnly: true },
   { name: 'dispatchSettings', path: 'dispatch_settings/{section}', area: 'Dispatch settings', level: 'medium', staffOnly: true }
@@ -417,7 +424,7 @@ function ingestEntry(text, app, at) {
 }
 
 module.exports = {
-  ADMIN_EMAILS, WATCHES, REPORT_MAX, INGEST_APPS, shortKeepDrops,
+  ADMIN_EMAILS, WATCHES, REPORT_MAX, INGEST_APPS, changeDrops,
   ingestEntry,
   clip, normEmail, safeKey, hash, dayKey, bucket, requestIp, pushIdAt,
   parseReport, reportEntry, signInRowFor, SIGNIN_MATCH, authEventEntry, deviceName, deviceKey,
