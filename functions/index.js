@@ -56,6 +56,7 @@ const { ServerValue } = require('firebase-admin/database');
 const { applicationDefault } = require('firebase-admin/app');
 const { getStorage } = require('firebase-admin/storage');
 const crypto = require('crypto');
+const { Readable } = require('stream');
 const L = require('./lib');
 const AT = require('./alert-types');
 const BK = require('./backup');
@@ -540,23 +541,28 @@ exports.auditPrune = onSchedule({ schedule: 'every day 03:30', timeZone: 'Americ
 
 // 7:00 PM in Brandon, after the working day. The function's service account needs
 // Storage Object Creator on the bucket (README, "Daily backup").
-// It holds the whole database in memory at once, so it gets more than the other watchers: on
-// 2026-11-03 it ran out at 256 MiB (278 MiB used) when the gzipped copy reached about 1 MB, and was
-// killed before it could raise its own alert.
+// On 2026-11-03 it ran out of memory at 256 MiB (278 MiB used) when it still loaded the whole
+// database at once, and was killed before it could raise its own alert. It now streams the data
+// (backup.js), so its memory use doesn't grow with the database; the 1 GiB is spare headroom.
 const BACKUP_MEMORY = '1GiB';
 exports.auditBackup = onSchedule({ schedule: 'every day 19:00', timeZone: 'America/Winnipeg', region: REGION, memory: BACKUP_MEMORY, timeoutSeconds: 300 }, async () => {
   const at = Date.now();
   const dbUrl = db().ref().toString().replace(/\/$/, '');
   try {
+    const token = async () => (await applicationDefault().getAccessToken()).access_token;
     const res = await BK.makeBackup({
-      readData: async () => (await db().ref().once('value')).val(),
+      // The REST API streams the whole database as JSON; the admin token reads past the rules.
+      openData: async () => {
+        const r = await fetch(dbUrl + '/.json', { headers: { Authorization: 'Bearer ' + await token() } });
+        if (!r.ok) throw new Error('data download: HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
+        return Readable.fromWeb(r.body);
+      },
       readRules: async () => {
-        const { access_token: token } = await applicationDefault().getAccessToken();
-        const r = await fetch(dbUrl + '/.settings/rules.json', { headers: { Authorization: 'Bearer ' + token } });
+        const r = await fetch(dbUrl + '/.settings/rules.json', { headers: { Authorization: 'Bearer ' + await token() } });
         if (!r.ok) throw new Error('rules download: HTTP ' + r.status);
         return r.text();
       },
-      save: (name, buf) => getStorage().bucket(BK.BUCKET).file(name).save(buf, { resumable: false, contentType: 'application/gzip' })
+      openSave: (name) => getStorage().bucket(BK.BUCKET).file(name).createWriteStream({ resumable: false, contentType: 'application/gzip' })
     }, at);
     await tally('auditBackup', at);
     logger.info('Database backed up', res);
