@@ -40,6 +40,15 @@ test('a backup saves the whole database and the rules, gzipped', async () => {
   assert.equal(zlib.gunzipSync(saved[res.names.rules]).toString(), '{ "rules": {} }');
   assert.equal(res.dataBytes, saved[res.names.data].length);
   assert.equal(res.rulesBytes, saved[res.names.rules].length);
+  assert.equal(res.rawBytes, JSON.stringify(db).length);
+});
+
+test('the off-site copy keeps every backup, and the 1st of the month also in monthly/', () => {
+  const names = B.backupNames(Date.UTC(2026, 10, 2, 0, 0, 5));   // Nov 1, 7 PM in Brandon
+  assert.deepEqual(B.vaultCopies(names, Date.UTC(2026, 10, 2, 0, 0, 5)).map((c) => c.to), [
+    names.data, names.data.replace('daily/', 'monthly/'), names.rules, names.rules.replace('daily/', 'monthly/')]);
+  const mid = B.backupNames(Date.UTC(2026, 10, 15, 0, 0, 5));
+  assert.deepEqual(B.vaultCopies(mid, Date.UTC(2026, 10, 15, 0, 0, 5)).map((c) => c.to), [mid.data, mid.rules]);
 });
 
 test('an empty database still makes a backup', async () => {

@@ -226,7 +226,24 @@ const WATCHES = [
   { name: 'tcVehicleClaims', path: 'timeclock/vehicle_claims/{gpsId}', area: 'Van picks', keepForever: true },
   { name: 'garage', path: 'garage/{section}/{id}', area: 'Garage', skip: ['history'] },
   { name: 'dispatchContacts', path: 'dispatch_contacts/{section}/{id}', area: 'Dispatch drivers list', staffOnly: true },
-  { name: 'dispatchSettings', path: 'dispatch_settings/{section}', area: 'Dispatch settings', level: 'medium', staffOnly: true }
+  { name: 'dispatchSettings', path: 'dispatch_settings/{section}', area: 'Dispatch settings', level: 'medium', staffOnly: true },
+  // Added 2026-11-04. Developer notes moved here from developer/<note> (a watcher there would fire on
+  // every busy RouteWatcher write); RouteWatcher's refused sign-ins stay under developer.
+  { name: 'devNotes', path: 'developer_notes/{id}', area: 'Developer notes', staffOnly: true, richText: true },
+  { name: 'loginRefusals', path: 'developer/login_refusals/{id}', area: 'RouteWatcher refused sign-ins', keepDays: 14 },
+  // Areas the rules now lock (nothing uses them). Any write here came from the console or server
+  // code, or the rules were opened, so every change raises a high alert.
+  { name: 'userOrders', path: 'user_orders/{uid}', area: 'Locked: user_orders', level: 'high', locked: true },
+  { name: 'addressLookupDelivery', path: 'address_lookup_delivery/{id}', area: 'Locked: address_lookup_delivery', level: 'high', locked: true },
+  { name: 'deliveryLookup', path: 'delivery_lookup/{id}', area: 'Locked: delivery_lookup', level: 'high', locked: true },
+  { name: 'oldDrivers', path: 'drivers/{id}', area: 'Locked: drivers (old command center)', level: 'high', locked: true },
+  { name: 'oldDriverLocations', path: 'driver_locations/{id}', area: 'Locked: driver_locations (old command center)', level: 'high', locked: true },
+  { name: 'oldCommandTokens', path: 'command_tokens/{id}', area: 'Locked: command_tokens (old command center)', level: 'high', locked: true },
+  { name: 'oldGeofences', path: 'driver_geofences/{id}', area: 'Locked: driver_geofences (old command center)', level: 'high', locked: true },
+  { name: 'oldZones', path: 'driver_zones/{id}', area: 'Locked: driver_zones (old command center)', level: 'high', locked: true },
+  { name: 'oldSchedules', path: 'recurring_schedules/{id}', area: 'Locked: recurring_schedules (old command center)', level: 'high', locked: true },
+  // The morning test write (auditCanary): shows the database watchers still run. No alert.
+  { name: 'canaryWatch', path: 'audit_canary/{id}', area: 'Watch test', quiet: true, keepDays: 14 }
 ];
 
 function actionOf(before, after) {
@@ -304,7 +321,9 @@ function changeAlerts(entry, watch, { staff, adminEmail }) {
   } else if (watch.staffOnly && entry.by.type === 'app_user' && staff === false && !adminEmail) {
     out.push({ type: 'nonstaff_change', level: 'high', title: 'Non-staff account changed staff data', detail: who + ' ' + entry.action + ' ' + entry.path + ' without being on the staff list.' });
   }
-  if (watch.level && !watch.quiet) {
+  if (watch.locked) {
+    out.push({ type: 'locked_area_write', level: 'high', title: 'Write to a locked area: ' + entry.area.replace(/^Locked: /, ''), detail: who + ' ' + entry.action + ' ' + entry.path + '. The rules lock this area, so this came from the console, server code, or opened rules.' });
+  } else if (watch.level && !watch.quiet) {
     out.push({ type: watch.level === 'high' ? 'access_change' : 'settings_change', level: watch.level, title: entry.area + ' ' + entry.action, detail: who + ' ' + entry.action + ' ' + entry.path + (entry.fields.length ? ' (' + entry.fields.slice(0, 5).map((f) => f.f).join(', ') + ')' : '') });
   }
   if (entry.action === 'deleted' && entry.n >= 20) {

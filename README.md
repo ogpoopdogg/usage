@@ -131,16 +131,16 @@ Added on 2026-10-31. The pure parts are in `functions/watch.js` (tested in `watc
 |---|---|---|
 | Code hidden in saved data | Any watched change whose new or changed text contains a script tag, an event handler (`onerror=`), a `javascript:` link, encoded `<` `>`, a template expression, browser code, a `__proto__` key, or more than 20,000 characters in one field | `injection` (high) |
 | Dispatch | Changes to `dispatch_contacts` (driver list) and `dispatch_settings` (reminders), like the other watched areas | `settings_change`, `nonstaff_change` |
-| Database rules | `auditRulesCheck` downloads the rules every hour and compares them with the last copy in `security_log/rules_watch` (the copy before that is kept as `previous`) | `rules_changed` (high if a `.read`/`.write` became `true` or was removed) |
+| Database rules | `auditRulesCheck` downloads the rules every 10 minutes and compares them with the last copy in `security_log/rules_watch` (the copy before that is kept as `previous`) | `rules_changed` (high if a `.read`/`.write` became `true` or was removed) |
 | New account | Any new account that is not @ec.com | `new_account` |
 | Night sign-in | A staff sign-in between midnight and 5 AM Brandon time (fixed UTC-5, Manitoba's time from 2026-11-01) | `night_signin` |
 | New network | A staff sign-in from an IP range the account hasn't used (`security_log/networks`); off by default because phones change networks | `new_network` |
 | Time clock | A saved punch in or punch out changed by anyone other than an admin, or a shift deleted | `tc_punch_changed`, `tc_shift_deleted` |
-| Database downloads | `auditUsageCheck` reads the last full hour of `firebasedatabase.googleapis.com/network/sent_bytes_count` from Cloud Monitoring every hour; 5× the usual hour (median of 8 days, at least 200 MB) or 2 GB in an hour | `download_spike` |
-| Google Cloud | `auditCloudLog` gets Admin Activity audit log entries from a log sink: permissions, service accounts and keys, API keys, buckets, Cloud Functions, scheduled jobs. Each is listed under Changes; one alert per kind per account per 10 minutes (a deploy makes dozens) | `cloud_access`, `cloud_functions` |
+| Database downloads | `auditUsageCheck` reads the last full hour of `firebasedatabase.googleapis.com/network/sent_bytes_count` from Cloud Monitoring every hour, leaving out the nightly backup's own download (`security_log/backup_bytes`); 3× the usual hour (median of 8 days) and at least 15 MB, or 100 MB in any hour (the whole database was about 11 MB on 2026-11-04) | `download_spike` |
+| Google Cloud | `auditCloudLog` gets Admin Activity audit log entries from a log sink: permissions, service accounts and keys, API keys, buckets, Cloud Functions, scheduled jobs, and since 2026-11-04 the log sinks and Pub/Sub topics this feed runs on, Firebase sign-in settings, Cloud Run services and the database instance itself. Each is listed under Changes; one alert per kind per account per 10 minutes (a deploy makes dozens) | `cloud_access`, `cloud_functions` |
 | Spending | `auditBudget` gets the budget's notifications; one alert per step passed per month | `budget` |
 | GitHub | `auditGitHub` gets webhooks: collaborators, deploy keys, repo made public, deleted, renamed or transferred, force pushes, branch rules, failed Pages builds, pushes to the main branch (off by default) | `github_access`, `github_site`, `github_push` |
-| Heartbeat | `auditHeartbeat`, 8 AM Brandon time: checks the scheduled watchers ran (`security_log/last`). All fine sends a "Security: all OK" notification; a stopped one raises a high alert. If the morning notification stops coming, the watching itself has stopped | `heartbeat`, `watch_stopped` |
+| Heartbeat | `auditHeartbeat`, 8 AM Brandon time: checks the scheduled watchers ran (`security_log/last`), and since 2026-11-04 also the database watchers, the Google Cloud feed (both through the 7:30 AM test) and the GitHub webhooks (within 7 days). All fine sends a "Security: all OK" notification; a stopped one raises a high alert. If the morning notification stops coming, the watching itself has stopped | `heartbeat`, `watch_stopped` |
 
 ### One-time setup, in Cloud Shell
 
@@ -157,8 +157,24 @@ The steps are in `scripts/setup-extra-watches.sh` (Cloud Shell, run from this re
 ### Limits
 
 - The injection check looks only at the watched areas (the table under "Watched parts of the database" plus Dispatch), and only at text that is new or changed. It is a set of patterns, not a guarantee: it catches the usual attempts, and the apps escaping what they show is still what actually stops them.
-- The rules check runs hourly, so a change and a change back within the hour is missed. Who changed them shows only in the Google Cloud alerts if the log sink is set up.
+- The rules check runs every 10 minutes, so a change and a change back within 10 minutes is missed. Who changed them shows only in the Google Cloud alerts if the log sink is set up.
 - Cloud Monitoring numbers arrive a few minutes late, so the download check looks at the hour ending 10 minutes ago. It needs 24 hours of history before it raises a medium alert.
+
+## Security fixes, 2026-11-04
+
+From the blind-spot review on 2026-11-04 (the fixes Justin picked). Run `scripts/setup-security-fixes.sh` in Cloud Shell once the pull request is merged; it does the Google Cloud parts, deploys, and asks before changing the database rules or deleting anything.
+
+| Fix | What changed | Alert kind |
+|---|---|---|
+| No reset emails to @ec.com | `auditBeforeEmail` refuses any Firebase email (password reset, sign-in link) to an @ec.com address: ec.com belongs to someone outside E&C, so the email would reach them. Staff passwords are reset with `bash scripts/set-staff-password.sh name@ec.com` instead | `reset_blocked` (high) |
+| Password guessing straight at Firebase | `auditSignInLog` reads Identity Platform's own request log (log sink `security-signin-log`), so tries that skip the apps are seen too. 5 failed tries for one email, or 10 from one IP, in 15 minutes. The first 5 entries are kept in `security_log/signin_log_samples` to check the fields it reads | `signin_guessing` (high) |
+| Morning test | `auditCanary`, 7:30 AM Brandon time, writes `audit_canary/ping` (the `canaryWatch` watcher must see it) and changes a label on the topic `security-canary` (the Google Cloud feed must pass it on, `last/cloudFeed`). If either doesn't arrive, the 8 AM heartbeat raises `watch_stopped` | `watch_stopped` |
+| Alert settings | `auditNotifyChange` logs every change to `security_log/notify` under Changes. Turning phone notifications off, or unticking a kind, sends one last phone notification whatever the new settings say | `alerts_muted` (high) |
+| Locked areas | Areas no app uses any more can't be written by anyone (database rules, `scripts/rules-update-2026-11-04.py`): `user_orders`, `address_lookup_delivery`, `delivery_lookup`, and the old command-center areas. A watcher on each raises a high alert if anything is written there anyway | `locked_area_write` (high) |
+| Developer notes | Notes moved to `developer_notes/<id>` (staff add, only Justin edits or deletes, sizes capped) and are watched. `developer/<anything>` is no longer writable except Route Planner and RouteWatcher's refused sign-in log, which is add-only | `nonstaff_change`, `injection` |
+| Off-site backup | After each nightly backup, `auditBackup` copies it to `gs://eandccourier-36fcc-backup-vault` in a separate project. The functions can only add files there. Nothing can be deleted for 30 days, deleted files can be brought back for 90 days, daily copies go after 90 days, and the copy from the 1st of each month (`monthly/`) is kept for good. The main bucket's undelete went from 7 to 30 days | `backup_vault_failed` (high) |
+
+The database rules change also removes celeste@ec.com as an admin (she has no account) and limits `users/<uid>` to what Request Pickup saves (`company_id`, `theme`, `profile` with `name` and `phone`). The time clock change (timeclock repository) makes the admin panel the only way to make a new @ec.com sign-in.
 
 ## Running cost
 

@@ -88,13 +88,42 @@ test('punch times changed by a non-admin, and deleted shifts', () => {
 });
 
 test('download spikes compare with the usual hour', () => {
-  const day = Array(48).fill(20e6);  // 20 MB an hour
-  assert.equal(W.usageSpike(30e6, day), null);
-  assert.equal(W.usageSpike(150e6, day), null);                       // 7.5x but under 200 MB
-  assert.equal(W.usageSpike(250e6, day).level, 'medium');
-  assert.equal(W.usageSpike(250e6, day.slice(0, 10)), null);          // too little history yet
-  assert.equal(W.usageSpike(2.5e9, []).level, 'high');
+  const day = Array(48).fill(2e6);  // 2 MB an hour
+  assert.equal(W.usageSpike(5e6, day), null);
+  assert.equal(W.usageSpike(12e6, day), null);                        // 6x but under 15 MB
+  assert.equal(W.usageSpike(16e6, day).level, 'medium');              // about one whole copy of the database
+  assert.equal(W.usageSpike(16e6, day.slice(0, 10)), null);           // too little history yet
+  assert.equal(W.usageSpike(40e6, Array(48).fill(20e6)), null);       // busy usual hour: only 2x
+  assert.equal(W.usageSpike(120e6, []).level, 'high');
   assert.equal(W.usageSpike(NaN, day), null);
+});
+
+test('the watching can not be switched off quietly', () => {
+  const entry = (methodName, resourceName) => ({ severity: 'NOTICE', protoPayload: { methodName, resourceName: resourceName || 'projects/p',
+    authenticationInfo: { principalEmail: 'mallory@gmail.com' } } });
+  assert.equal(W.cloudLogAlert(entry('google.logging.v2.ConfigServiceV2.DeleteSink')).level, 'high');
+  assert.equal(W.cloudLogAlert(entry('google.logging.v2.ConfigServiceV2.UpdateSink')).type, 'cloud_access');
+  assert.equal(W.cloudLogAlert(entry('google.pubsub.v1.Publisher.DeleteTopic')).level, 'high');
+  assert.equal(W.cloudLogAlert(entry('google.pubsub.v1.Subscriber.DeleteSubscription')).level, 'high');
+  assert.equal(W.cloudLogAlert(entry('google.cloud.identitytoolkit.admin.v2.ProjectConfigService.UpdateConfig')).level, 'high');
+  assert.equal(W.cloudLogAlert(entry('google.cloud.run.v2.Services.DeleteService')).type, 'cloud_functions');
+  assert.equal(W.cloudLogAlert(entry('google.firebase.database.v1beta.RealtimeDatabaseService.DeleteDatabaseInstance')).level, 'high');
+  assert.equal(W.isCanary(entry('google.pubsub.v1.Publisher.UpdateTopic', 'projects/p/topics/security-canary')), true);
+  assert.equal(W.isCanary(entry('google.pubsub.v1.Publisher.UpdateTopic', 'projects/p/topics/security-cloud-log')), false);
+  assert.equal(W.isCanary(null), false);
+});
+
+test('failed password tries are read from Firebase\u2019s activity log', () => {
+  const e = (payload, extra) => Object.assign({ jsonPayload: Object.assign({ methodName: 'google.cloud.identitytoolkit.v1.AuthenticationService.SignInWithPassword' }, payload) }, extra);
+  const f = W.signInLogFailure(e({ request: { email: 'Justin@EC.com' }, requestMetadata: { callerIp: '5.6.7.8', callerSuppliedUserAgent: 'curl/8' },
+    status: { code: 3, message: 'INVALID_LOGIN_CREDENTIALS' } }));
+  assert.deepEqual(f, { email: 'justin@ec.com', ip: '5.6.7.8', ua: 'curl/8', code: 'INVALID_LOGIN_CREDENTIALS' });
+  assert.equal(W.signInLogFailure(e({ request: { email: 'a@b.c' }, response: { localId: 'u1' } })), null);       // worked
+  assert.equal(W.signInLogFailure(e({ request: { email: 'a@b.c' } }, { severity: 'ERROR' })).email, 'a@b.c');      // only the severity says so
+  assert.equal(W.signInLogFailure({ protoPayload: { methodName: 'x.SignInWithPassword', status: { message: 'INVALID_PASSWORD' }, request: { email: 'a@b.c' } },
+    httpRequest: { remoteIp: '9.9.9.9' } }).ip, '9.9.9.9');
+  assert.equal(W.signInLogFailure(e({ methodName: 'google.cloud.identitytoolkit.v1.AccountManagementService.GetAccountInfo', status: { code: 3 } })), null);
+  assert.equal(W.signInLogFailure(null), null);
 });
 
 test('Google Cloud audit entries become alerts', () => {
@@ -135,6 +164,7 @@ test('GitHub deliveries that matter become alerts', () => {
   assert.equal(ev('page_build', { build: { status: 'errored', error: { message: 'bad' } } }).type, 'github_site');
   assert.equal(ev('page_build', { build: { status: 'built' } }), null);
   assert.equal(ev('star', {}), null);
+  assert.equal(ev('meta', { action: 'deleted', hook_id: 1 }).level, 'high');
 });
 
 test('the heartbeat names watchers that stopped', () => {
@@ -144,4 +174,8 @@ test('the heartbeat names watchers that stopped', () => {
   const stale = Object.assign({}, fresh, { auditBackup: now - 30 * W.HOUR });
   delete stale.auditUserCensus;
   assert.deepEqual(W.heartbeatProblems(stale, now).map((p) => p.name).sort(), ['auditBackup', 'auditUserCensus']);
+  const quiet = Object.assign({}, fresh, { cloudFeed: now - 27 * W.HOUR, auditRulesCheck: now - 2 * W.HOUR });
+  const got = W.heartbeatProblems(quiet, now);
+  assert.deepEqual(got.map((p) => p.name).sort(), ['auditRulesCheck', 'cloudFeed']);
+  assert.match(got.find((p) => p.name === 'cloudFeed').what, /log sink/);
 });

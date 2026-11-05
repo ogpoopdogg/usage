@@ -137,6 +137,11 @@ test('alerts for changes', () => {
   assert.deepEqual(L.changeAlerts(entry(), sessions, { staff: true }), []);
   assert.deepEqual(L.changeAlerts(entry({ action: 'deleted', n: 25 }), lookup, { staff: true }).map((a) => a.title), ['Large delete']);
   assert.deepEqual(L.changeAlerts(entry({ by: { type: 'admin', uid: null } }), lookup, { staff: null }), []);
+  // Locked areas: any write at all is high, whoever made it
+  const locked = L.WATCHES.find((w) => w.name === 'userOrders');
+  assert.deepEqual(L.changeAlerts(entry({ by: { type: 'admin', uid: null } }), locked, { staff: null }).map((a) => [a.type, a.level]), [['locked_area_write', 'high']]);
+  // The morning test write is quiet
+  assert.deepEqual(L.changeAlerts(entry({ by: { type: 'admin', uid: null } }), L.WATCHES.find((w) => w.name === 'canaryWatch'), { staff: null }), []);
 });
 
 test('every watch has a unique name and a path the trigger accepts', () => {
@@ -275,7 +280,7 @@ test('the change log keeps everyday areas 14 days, the time clock and Request Pi
     j: null
   };
   assert.deepEqual(L.changeDrops(entries, now, 90).sort(), ['a', 'c', 'e', 'f', 'i']);
-  assert.deepEqual(L.WATCHES.filter((w) => w.keepDays).map((w) => w.name).sort(), ['nicknames', 'pushTokens', 'routePlanner', 'sessions']);
+  assert.deepEqual(L.WATCHES.filter((w) => w.keepDays).map((w) => w.name).sort(), ['canaryWatch', 'loginRefusals', 'nicknames', 'pushTokens', 'routePlanner', 'sessions']);
   const pickup = ['requests', 'companies', 'joinCodes', 'users'];
   for (const w of L.WATCHES) assert.equal(!!w.keepForever, w.name.startsWith('tc') || pickup.includes(w.name), w.name);
 });
