@@ -52,6 +52,7 @@ const { onMessagePublished } = require('firebase-functions/v2/pubsub');
 const { defineSecret } = require('firebase-functions/params');
 const { beforeUserSignedIn, beforeEmailSent, beforeSmsSent, HttpsError } = require('firebase-functions/v2/identity');
 const functionsV1 = require('firebase-functions/v1');
+const { setGlobalOptions } = require('firebase-functions/v2');
 const logger = require('firebase-functions/logger');
 const admin = require('firebase-admin');
 const { ServerValue } = require('firebase-admin/database');
@@ -70,6 +71,13 @@ admin.initializeApp();
 const REGION = 'us-central1';
 const MEMORY = '256MiB';
 const LOG = 'security_log';
+
+// Every function here runs as its own Google account with only what the watchers need (database,
+// sign-in list read, phone notifications, the backup buckets, the canary topic, Cloud Monitoring
+// read, its two secrets), not the project's default account, which has Editor on everything.
+// scripts/setup-robot-keys.sh makes the account and gives it those rights. Added 2026-11-05.
+const RUN_AS = 'ec-audit@eandccourier-36fcc.iam.gserviceaccount.com';
+setGlobalOptions({ serviceAccount: RUN_AS });
 
 const MIN = 60 * 1000;
 const DAY = 24 * 60 * MIN;
@@ -283,7 +291,7 @@ function userSummary(u) {
   };
 }
 
-exports.auditUserCreated = functionsV1.region(REGION).runWith({ memory: '256MB' }).auth.user().onCreate(async (u) => {
+exports.auditUserCreated = functionsV1.region(REGION).runWith({ memory: '256MB', serviceAccount: RUN_AS }).auth.user().onCreate(async (u) => {
   const at = Date.now();
   const s = userSummary(u);
   const staff = /@ec\.com$/.test(s.email || '');
@@ -296,7 +304,7 @@ exports.auditUserCreated = functionsV1.region(REGION).runWith({ memory: '256MB' 
   ]);
 });
 
-exports.auditUserDeleted = functionsV1.region(REGION).runWith({ memory: '256MB' }).auth.user().onDelete(async (u) => {
+exports.auditUserDeleted = functionsV1.region(REGION).runWith({ memory: '256MB', serviceAccount: RUN_AS }).auth.user().onDelete(async (u) => {
   const at = Date.now();
   const s = userSummary(u);
   const staff = /@ec\.com$/.test(s.email || '');

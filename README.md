@@ -176,6 +176,20 @@ From the blind-spot review on 2026-11-04 (the fixes Justin picked). Run `scripts
 
 The database rules change also removes celeste@ec.com as an admin (she has no account) and limits `users/<uid>` to what Request Pickup saves (`company_id`, `theme`, `profile` with `name` and `phone`). The time clock change (timeclock repository) makes the admin panel the only way to make a new @ec.com sign-in.
 
+## Robot keys
+
+Fix 12 from the 2026-11-04 review. Cloud Functions used to run as Google's default account, which has Editor on the whole project, so a fault in any one function could change anything. Each group now runs as its own account with only what it needs:
+
+| Account | Runs | May do |
+|---|---|---|
+| `ec-audit@` | every function in this repository (codebase `audit`) | read and write the database, read the sign-in list, send phone notifications, read Cloud Monitoring, add and read backup files in the main bucket, only add files in the vault, change the label on the `security-canary` topic, read the secrets `GITHUB_WEBHOOK_SECRET` and `PLUTOSCAN_AUDIT_KEY` |
+| `ec-apps@` | time clock (codebase `timeclock`) and Dispatch (codebase `default`) functions | read and write the database, send phone notifications |
+| `ec-gps@` | `pollNow` and `pajApi` (Cloud Run services `pollnow` and `pajapi`) | read and write the database, read the PAJ and FleetHunt secrets |
+
+All three can also write logs, and the first two can receive database and scheduled events. The Pub/Sub service agent gets the right to sign its calls to the functions.
+
+Run `git pull && bash scripts/setup-robot-keys.sh` in Cloud Shell after the usage, timeclock and dispatch pull requests are merged. It only adds accounts and rights, then asks before each of the three deploys and tests after each: it runs the scheduled watchers and checks `security_log/last`, and lists any "permission denied" errors from the last 10 minutes. It does not take Editor away from the default accounts; that is a later step, after a few days with everything running on the new accounts. The end of the script prints how to switch the GPS functions back.
+
 ## Running cost
 
 Phone notifications run one short function per alert (`auditAlertPush`), and sending through Firebase Cloud Messaging is free. Each watched change runs one function, so busy areas (time clock punches, jobs) cost the most. The line under the range buttons shows how many times the watchers ran on the latest day, and `security_log/stats` keeps a count per watcher per day. Compare with the Cloud Functions line in the Firebase usage and billing page. Every function is set to 256 MiB of memory to keep each run cheap.
