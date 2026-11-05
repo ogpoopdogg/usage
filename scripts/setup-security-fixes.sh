@@ -42,7 +42,7 @@ gcloud storage buckets update gs://$MAIN_BUCKET --soft-delete-duration=30d --for
 
 step "5. Off-site copy in a second project ($VAULT_PROJECT)"
 if ! gcloud projects describe $VAULT_PROJECT >/dev/null 2>&1; then
-  gcloud projects create $VAULT_PROJECT --name="E&C backup vault" || { echo "Couldn't make the project. If the name is taken, run again with VAULT_PROJECT=another-name, and tell Claude the name."; }
+  gcloud projects create $VAULT_PROJECT --name="EC backup vault"   # "&" is not allowed in a project name || { echo "Couldn't make the project. If the name is taken, run again with VAULT_PROJECT=another-name, and tell Claude the name."; }
 fi
 gcloud billing projects link $VAULT_PROJECT --billing-account=$BILLING --format='value(billingEnabled)'
 gcloud services enable storage.googleapis.com --project $VAULT_PROJECT
@@ -100,7 +100,7 @@ step "8. Time clock: only the admin panel can make new @ec.com sign-ins"
 TC=~/timeclock
 [ -d $TC/.git ] || git clone -q https://github.com/ogpoopdogg/timeclock $TC
 git -C $TC pull -q
-if curl -fsS "https://ogpoopdogg.github.io/timeclock/admin.html?nocache=$(date +%s)" | grep -q signup_ok; then
+if curl -fsSL "https://app.eandccourier.ca/timeclock/admin.html?nocache=$(date +%s)" | grep -q signup_ok; then
   (cd $TC/functions && npm ci --silent)
   (cd $TC && npx -y firebase-tools deploy --only functions:timeclock:timeclockBeforeUserCreated --project $P --force 2>&1 | grep -E 'Successful|Error|error|Deploy complete' | tail -5)
 else
