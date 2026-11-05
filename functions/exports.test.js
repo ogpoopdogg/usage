@@ -6,6 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
+process.env.GCLOUD_PROJECT = process.env.GCLOUD_PROJECT || 'eandccourier-36fcc'; // the sign-in triggers read it
 const L = require('./lib');
 const I = require('./index');
 
@@ -26,4 +27,9 @@ test('the setup script deploys every function', () => {
   const listed = new Set(batches.match(/audit[A-Za-z]+/g));
   assert.deepEqual(Object.keys(I).filter((n) => !listed.has(n)), []);
   assert.deepEqual([...listed].filter((n) => !I[n]), []);
+});
+
+test('every function runs as the audit account, not the default one with Editor', () => {
+  const other = Object.entries(I).filter(([, f]) => !f.__endpoint || f.__endpoint.serviceAccountEmail !== 'ec-audit@eandccourier-36fcc.iam.gserviceaccount.com');
+  assert.deepEqual(other.map(([n]) => n), []);
 });
