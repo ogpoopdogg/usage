@@ -96,3 +96,47 @@ test('the census keeps the paid flag and spots changes made outside the site', (
   assert.deepEqual(diff.map((d) => d.f), ['claims']);
   assert.equal(L.censusAlertLevel(diff), 'high');
 });
+
+test('Stripe signatures are checked the way Stripe documents', () => {
+  const crypto = require('crypto');
+  const secret = 'whsec_test';
+  const body = JSON.stringify({ id: 'evt_1', type: 'charge.refunded' });
+  const t = 1792600000;
+  const sig = crypto.createHmac('sha256', secret).update(t + '.' + body).digest('hex');
+  assert.equal(L.stripeSignatureOk('t=' + t + ',v1=' + sig, body, secret, t + 10), true);
+  assert.equal(L.stripeSignatureOk('t=' + t + ',v1=deadbeef,v1=' + sig, body, secret, t), true);
+  assert.equal(L.stripeSignatureOk('t=' + t + ',v1=' + sig, body + ' ', secret, t), false);
+  assert.equal(L.stripeSignatureOk('t=' + t + ',v1=' + sig, body, 'whsec_other', t), false);
+  assert.equal(L.stripeSignatureOk('t=' + t + ',v1=' + sig, body, secret, t + 301), false);
+  assert.equal(L.stripeSignatureOk('v1=' + sig, body, secret, t), false);
+  assert.equal(L.stripeSignatureOk(undefined, body, secret, t), false);
+  assert.equal(L.stripeSignatureOk('t=' + t + ',v1=' + sig, body, '', t), false);
+});
+
+test('Stripe events become log entries and alerts', () => {
+  const ev = (type, object, livemode) => ({ id: 'evt_x', type, livemode: !!livemode, data: { object } });
+  const failed = L.stripeEntry(ev('payment_intent.payment_failed', { amount: 4900, currency: 'usd', receipt_email: 'A@b.com',
+    last_payment_error: { code: 'card_declined', decline_code: 'insufficient_funds', message: 'Your card has insufficient funds.', payment_method: { type: 'card', card: { brand: 'visa', country: 'US', last4: '4242' } } } }), AT);
+  assert.equal(failed.entry.type, 'payment_failed');
+  assert.equal(failed.entry.ok, false);
+  assert.equal(failed.entry.email, 'a@b.com');
+  assert.equal(failed.entry.code, 'insufficient_funds');
+  assert.equal(failed.entry.amount, '49.00 USD');
+  assert.equal(failed.entry.method, 'visa US');
+  assert.ok(!JSON.stringify(failed).includes('4242'));
+  assert.equal(failed.alert, undefined);
+
+  const paid = L.stripeEntry(ev('checkout.session.completed', { amount_total: 4900, currency: 'usd', payment_status: 'paid', client_reference_id: 'u1', customer_details: { email: 'a@b.com' } }, true), AT);
+  assert.equal(paid.entry.type, 'stripe_paid');
+  assert.equal(paid.entry.uid, 'u1');
+  assert.equal(paid.entry.livemode, true);
+
+  assert.equal(L.stripeEntry(ev('checkout.session.expired', { amount_total: 4900, currency: 'usd' }), AT).entry.type, 'checkout_expired');
+  assert.equal(L.stripeEntry(ev('charge.refunded', { amount_refunded: 4900, currency: 'usd' }), AT).alert.level, 'medium');
+  const dispute = L.stripeEntry(ev('charge.dispute.created', { amount: 4900, currency: 'usd', reason: 'fraudulent' }), AT);
+  assert.equal(dispute.alert.level, 'high');
+  assert.match(dispute.alert.detail, /fraudulent/);
+  assert.equal(L.stripeEntry(ev('charge.dispute.closed', { amount: 4900, currency: 'usd', status: 'won' }), AT).alert.level, 'low');
+  assert.equal(L.stripeEntry(ev('radar.early_fraud_warning.created', { fraud_type: 'stolen_card' }), AT).alert.level, 'high');
+  assert.equal(L.stripeEntry(ev('customer.created', {}), AT), null);
+});

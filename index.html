@@ -454,6 +454,12 @@
                     <option value="course_denied">Turned away from the PlutoScan course</option>
                     <option value="checkout">PlutoScan checkout steps</option>
                     <option value="visit">PlutoScan visits</option>
+                    <option value="stripe_paid">Stripe payments</option>
+                    <option value="payment_failed">Stripe failed payments</option>
+                    <option value="checkout_expired">Stripe checkouts abandoned</option>
+                    <option value="refund">Stripe refunds</option>
+                    <option value="dispute">Stripe chargebacks</option>
+                    <option value="fraud_warning">Stripe fraud warnings</option>
                 </select>
                 <select id="sec-ev-app" aria-label="App"><option value="all">All apps</option></select>
                 <input class="full" type="search" id="sec-ev-q" placeholder="Search email, IP, phone, error…" aria-label="Search sign-in activity">
@@ -477,6 +483,9 @@
                     <option value="app_user">Signed-in people</option>
                     <option value="admin">Server or console</option>
                     <option value="unauthenticated">Not signed in</option>
+                    <option value="stripe">Stripe (PlutoScan)</option>
+                    <option value="google">Google Cloud (PlutoScan)</option>
+                    <option value="check">Hourly Stripe check (PlutoScan)</option>
                 </select>
                 <input class="full" type="search" id="sec-ch-q" placeholder="Search record, person, field or value…" aria-label="Search database changes">
             </div>

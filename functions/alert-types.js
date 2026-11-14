@@ -61,6 +61,20 @@
     pluto_account_deleted: { group: 'pluto', level: 'high',   on: true,  label: 'Account or its data deleted' },
     pluto_account_changed: { group: 'pluto', level: 'medium', on: true,  label: 'Account changed outside the site' },
     pluto_report_flood:    { group: 'pluto', level: 'medium', on: true,  label: 'Too many reports from one place' },
+    pluto_refund:          { group: 'pluto', level: 'medium', on: true,  label: 'Stripe refund' },
+    pluto_chargeback:      { group: 'pluto', level: 'high',   on: true,  label: 'Stripe chargeback or fraud warning' },
+    pluto_stripe_forged:   { group: 'pluto', level: 'high',   on: true,  label: 'Fake Stripe messages', help: 'Requests to the Stripe watcher without a valid Stripe signature.' },
+    // PlutoScan payment setup (added 2026-11-14)
+    pluto_checkout_broken: { group: 'pluto', level: 'high',   on: true,  label: 'Checkout broken (price missing or archived)', help: 'The hourly Stripe check found the price checkout sells missing, archived or not set.' },
+    pluto_stripe_key:      { group: 'pluto', level: 'high',   on: true,  label: 'Stripe key or account used by checkout changed', help: 'A different Stripe account, key kind or key version, a new price ID, or the hourly check could not run.' },
+    pluto_stripe_webhooks: { group: 'pluto', level: 'high',   on: true,  label: 'Stripe webhook endpoint added, changed or removed', help: 'Found by the hourly check, so up to an hour late.' },
+    pluto_stripe_bank:     { group: 'pluto', level: 'high',   on: true,  label: 'Stripe payout bank account changed' },
+    pluto_stripe_account:  { group: 'pluto', level: 'medium', on: true,  label: 'Stripe account settings changed' },
+    pluto_stripe_catalog:  { group: 'pluto', level: 'medium', on: true,  label: 'Stripe product or price changed', help: 'Made, changed, archived (high) or deleted (high).' },
+    pluto_stripe_payout:   { group: 'pluto', level: 'medium', on: true,  label: 'Stripe payout failed or canceled' },
+    pluto_secret_changed:  { group: 'pluto', level: 'high',   on: true,  label: 'Secret changed in Google Cloud', help: 'A new version of STRIPE_SECRET_KEY or STRIPE_WEBHOOK_SECRET (high), or any other PlutoScan secret (medium).' },
+    pluto_payment_deploy:  { group: 'pluto', level: 'medium', on: true,  label: 'Payment functions deployed or deleted', help: 'createCheckoutSession, stripeWebhook or getModuleContent.' },
+    pluto_cloud_change:    { group: 'pluto', level: 'high',   on: true,  label: 'Google Cloud access or log feed changed (PlutoScan)' },
     pluto_other:           { group: 'pluto', level: 'medium', on: true,  label: 'Any other PlutoScan alert' }
   };
   const GROUPS = { ec: 'E&C apps', pluto: 'PlutoScan' };

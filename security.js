@@ -28,7 +28,14 @@
         purchase_removed: { label: 'Paid access removed',    tone: 'warn' },
         course_denied:    { label: 'Turned away from course', tone: 'bad' },
         checkout:         { label: 'Checkout',               tone: 'info' },
-        visit:            { label: 'Visit',                  tone: 'muted' }
+        visit:            { label: 'Visit',                  tone: 'muted' },
+        stripe_paid:      { label: 'Stripe payment',         tone: 'ok' },
+        payment_failed:   { label: 'Payment failed',         tone: 'bad' },
+        checkout_expired: { label: 'Checkout abandoned',     tone: 'warn' },
+        refund:           { label: 'Refund',                 tone: 'warn' },
+        dispute:          { label: 'Chargeback',             tone: 'bad' },
+        dispute_closed:   { label: 'Chargeback closed',      tone: 'info' },
+        fraud_warning:    { label: 'Fraud warning',          tone: 'bad' }
     };
 
     let hours = 24;
@@ -89,10 +96,16 @@
         if (!by) return '';
         if (by.type === 'admin') return 'Server or console';
         if (by.type === 'unauthenticated') return 'Not signed in';
+        // PlutoScan payment setup watch (plutoscan-audit/functions/setup.js)
+        if (by.type === 'stripe') return by.request ? 'Stripe API request ' + by.request : 'Stripe itself (no API request)';
+        if (by.type === 'google') return (by.email || 'Unknown Google account') + (by.ip ? ' from ' + by.ip : '');
+        if (by.type === 'check') return 'Hourly Stripe check';
         return by.email || (by.uid ? 'uid ' + by.uid : 'Unknown');
     }
     const WRITERS = { app_user: 'a signed-in account', admin: 'server code or the Firebase console',
-        unauthenticated: 'someone not signed in', unknown: 'Firebase did not say who' };
+        unauthenticated: 'someone not signed in', unknown: 'Firebase did not say who',
+        stripe: 'Stripe event. Stripe does not send the Dashboard user or IP address; look the request up in Stripe under Developers, then Logs',
+        google: 'Google Cloud audit log', check: 'the hourly Stripe check noticed it' };
     function short(v) {
         if (v == null) return '—';
         const s = typeof v === 'string' ? v : JSON.stringify(v);
@@ -307,6 +320,8 @@
             if (e.changes) bits.push(e.changes.map(c => c.label + ': ' + short(c.b) + ' → ' + short(c.a)).join('; '));
             if (e.type === 'signin_refused') bits.push(e.verified ? 'token checked' : 'not verified' + (e.tokenError ? ' (' + e.tokenError + ')' : ''));
             if (e.step) bits.push('step: ' + e.step);
+            if (e.amount) bits.push(e.amount);
+            if (e.stripeEvent && e.livemode === false) bits.push('Stripe test mode');
             if (e.type === 'visit' || e.type === 'course_denied') bits.push(e.page || '');
             if (e.referrer) bits.push('from: ' + e.referrer);
             if (e.type === 'course_denied' || (e.type === 'checkout' && e.step === 'started')) bits.push(e.verified ? 'token checked' : 'not signed in or not verified');
@@ -373,6 +388,8 @@
         const val = v => (v == null ? '—' : typeof v === 'string' ? v : JSON.stringify(v));
         box.innerHTML =
             '<p>By ' + esc(who(c.by)) + (c.by && c.by.uid ? ' (uid ' + esc(c.by.uid) + ')' : '') + ': ' + esc(c.by ? WRITERS[c.by.type] || c.by.type : '') + '</p>' +
+            (c.by && c.by.agent ? '<p class="sub">Tool: ' + esc(c.by.agent) + '</p>' : '') +
+            (c.livemode === false ? '<p class="sub">Stripe test mode</p>' : '') +
             (fields.length ? '<h3>Changed fields</h3><dl class="fields">' +
                 fields.map(f => '<div><dt>' + esc(f.f) + '</dt><dd>' + (f.b == null ? '' : '<span class="was">' + esc(val(f.b)) + '</span> → ') + esc(val(f.a)) + '</dd></div>').join('') +
                 '</dl>' + (fields.length >= 40 ? '<p class="sub">Only the first 40 changed fields are listed.</p>' : '') : '') +
