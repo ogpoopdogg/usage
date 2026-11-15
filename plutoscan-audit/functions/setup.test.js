@@ -180,3 +180,36 @@ test('access and log feed changes are high; unrelated entries ignored', () => {
   assert.strictEqual(S.cloudChange(auditEntry('google.cloud.run.v2.Services.UpdateService', 'x'), AT), null);
   assert.strictEqual(S.cloudChange(null, AT), null);
 });
+
+test('can take payments: problems alert once when they appear, and are noted when fixed', () => {
+  const okAcct = { charges_enabled: true, payouts_enabled: true, requirements: { currently_due: [], past_due: [], disabled_reason: null } };
+  const hook = [{ id: 'we_1', url: 'https://us-central1-plutoscan.cloudfunctions.net/stripeWebhook', status: 'enabled' }];
+  const fine = Object.assign({}, good, { payments: S.paymentsState(okAcct, hook) });
+  assert.deepStrictEqual(S.paymentProblems(fine.payments), []);
+  assert.strictEqual(S.checkDiff(null, fine).alerts.length, 0);
+  assert.strictEqual(S.checkDiff(null, fine).changes[0].after.canTakePayments, 'yes');
+
+  const blocked = Object.assign({}, good, { payments: S.paymentsState(
+    { charges_enabled: false, payouts_enabled: false, requirements: { past_due: ['individual.id_number'], currently_due: ['individual.id_number'], disabled_reason: 'requirements.past_due' } },
+    [{ url: 'https://x/stripeWebhook', status: 'disabled' }]) });
+  const r = S.checkDiff(fine, blocked);
+  assert.strictEqual(r.alerts.length, 1);
+  assert.strictEqual(r.alerts[0].type, 'payments_blocked');
+  assert.strictEqual(r.alerts[0].level, 'high');
+  assert.match(r.alerts[0].detail, /turned off card payments.*requirements\.past_due/);
+  assert.match(r.alerts[0].detail, /overdue/);
+  assert.match(r.alerts[0].detail, /paused payouts/);
+  assert.match(r.alerts[0].detail, /turned off in Stripe/);
+  typed(r.alerts[0]);
+  // Same problems next hour: quiet. Fixed: a note, no alert.
+  assert.strictEqual(S.checkDiff(blocked, blocked).alerts.length, 0);
+  const fixed = S.checkDiff(blocked, fine);
+  assert.strictEqual(fixed.alerts.length, 0);
+  assert.ok(fixed.changes.some((c) => c.path === 'can take payments' && c.fields.every((f) => f.a === 'fixed')));
+  // No stripeWebhook endpoint at all
+  assert.match(S.paymentProblems(S.paymentsState(okAcct, [])).map((p) => p.text).join(' '), /no webhook to stripeWebhook/);
+  // Information due later is medium, with the date
+  const due = S.paymentProblems(S.paymentsState({ charges_enabled: true, requirements: { currently_due: ['a'], past_due: [], current_deadline: 1767225600 } }, hook));
+  assert.strictEqual(due[0].level, 'medium');
+  assert.match(due[0].text, /by 2026-01-01/);
+});

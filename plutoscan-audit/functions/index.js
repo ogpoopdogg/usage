@@ -474,7 +474,8 @@ async function lookAtStripe() {
     }
     const hooks = await stripeGet(key, 'webhook_endpoints?limit=100');
     if (hooks.status !== 200) return { error: 'Stripe would not list the webhook endpoints (HTTP ' + hooks.status + ').' };
-    return { account: L.clip(acct.body.id, 60), keyStart, keyVersion, latestKeyVersion, priceId: L.clip(priceId, 100), price, endpoints: S.endpointMap(hooks.body && hooks.body.data) };
+    return { account: L.clip(acct.body.id, 60), keyStart, keyVersion, latestKeyVersion, priceId: L.clip(priceId, 100), price, endpoints: S.endpointMap(hooks.body && hooks.body.data),
+      payments: S.paymentsState(acct.body, hooks.body && hooks.body.data) };
   } finally {
     key = null;
   }

@@ -199,7 +199,8 @@ const PRICE_WORDS = { missing: 'does not exist', archived: 'is archived', error:
 function summary(s) {
   return {
     account: s.account || null, keyStart: s.keyStart || null, keyVersion: s.keyVersion || null, latestKeyVersion: s.latestKeyVersion || null,
-    priceId: s.priceId || null, price: s.price ? s.price.state : null, webhookEndpoints: Object.keys(s.endpoints || {}).length
+    priceId: s.priceId || null, price: s.price ? s.price.state : null, webhookEndpoints: Object.keys(s.endpoints || {}).length,
+    canTakePayments: s.payments ? (paymentProblems(s.payments).length ? paymentProblems(s.payments).map((p) => p.key).join(', ') : 'yes') : null
   };
 }
 
@@ -267,6 +268,21 @@ function checkDiff(prev, cur) {
       detail: 'createCheckoutSession has no STRIPE_PRICE_ID, so checkout cannot start.' });
   }
 
+  // Can the account take payments? Alert when a problem appears (or is there at the first look);
+  // note when it goes away.
+  if (cur.payments) {
+    const before = new Set(paymentProblems(prev && prev.payments).map((p) => p.key));
+    const nowList = paymentProblems(cur.payments);
+    const fresh = nowList.filter((p) => !before.has(p.key));
+    if (fresh.length) {
+      alerts.push({ type: 'payments_blocked', level: fresh.some((p) => p.level === 'high') ? 'high' : 'medium',
+        title: fresh.length === 1 ? 'Stripe payments problem' : fresh.length + ' Stripe payments problems', detail: fresh.map((p) => p.text).join(' ').slice(0, 580) });
+      ch('can take payments', 'updated', fresh.map((p) => ({ f: p.key, b: null, a: p.text })), null, cur.payments);
+    }
+    const gone = [...before].filter((k) => !nowList.some((p) => p.key === k));
+    if (gone.length && prev) ch('can take payments', 'updated', gone.map((k) => ({ f: k, b: 'problem', a: 'fixed' })), null, cur.payments);
+  }
+
   // Webhook endpoints (Stripe sends no event when these change, so they're compared here).
   if (prev && prev.account === cur.account && prev.endpoints) {
     const a = prev.endpoints || {};
@@ -293,6 +309,43 @@ function checkDiff(prev, cur) {
     }
   }
   return { changes, alerts };
+}
+
+// ---------------------------------------------------------------- can the account take payments?
+
+/**
+ * What the hourly check keeps about whether Stripe can take PlutoScan's payments, from the account
+ * (charges_enabled, payouts_enabled, requirements; https://docs.stripe.com/api/accounts/object)
+ * and the webhook endpoint list (the one to stripeWebhook unlocks the course after a payment).
+ * A field Stripe doesn't send stays null and is not alerted on.
+ */
+function paymentsState(acct, endpoints) {
+  const a = acct || {};
+  const r = a.requirements || {};
+  const hooks = (endpoints || []).filter((e) => e && /\/stripeWebhook\b/.test(String(e.url || '')));
+  return {
+    charges: typeof a.charges_enabled === 'boolean' ? a.charges_enabled : null,
+    payouts: typeof a.payouts_enabled === 'boolean' ? a.payouts_enabled : null,
+    disabled: clip(r.disabled_reason, 80),
+    pastDue: Array.isArray(r.past_due) ? r.past_due.length : 0,
+    due: Array.isArray(r.currently_due) ? r.currently_due.length : 0,
+    deadline: Number.isFinite(r.current_deadline) ? r.current_deadline : null,
+    webhook: !hooks.length ? 'missing' : hooks.some((e) => e.status === 'enabled') ? 'on' : 'disabled'
+  };
+}
+
+/** The problems in a paymentsState, each { key, level, text }. */
+function paymentProblems(p) {
+  if (!p) return [];
+  const out = [];
+  if (p.charges === false) out.push({ key: 'charges', level: 'high', text: 'Stripe has turned off card payments on your account' + (p.disabled ? ' (reason: ' + p.disabled + ')' : '') + '. Nobody can buy the course.' });
+  else if (p.disabled) out.push({ key: 'disabled', level: 'high', text: 'Stripe says your account is restricted (reason: ' + p.disabled + ').' });
+  if (p.pastDue) out.push({ key: 'past_due', level: 'high', text: 'Stripe needs ' + p.pastDue + ' piece(s) of information that are overdue. Open the Stripe dashboard; it shows what to fill in.' });
+  else if (p.due) out.push({ key: 'due', level: 'medium', text: 'Stripe needs ' + p.due + ' piece(s) of information' + (p.deadline ? ' by ' + new Date(p.deadline * 1000).toISOString().slice(0, 10) : '') + ', or it may stop payments. Open the Stripe dashboard to fill them in.' });
+  if (p.payouts === false) out.push({ key: 'payouts', level: 'medium', text: 'Stripe has paused payouts to your bank. Money from sales stays in Stripe until you fix it in the dashboard.' });
+  if (p.webhook === 'missing') out.push({ key: 'webhook_missing', level: 'high', text: 'There is no webhook to stripeWebhook in this Stripe account, so people who pay won\'t get the course.' });
+  else if (p.webhook === 'disabled') out.push({ key: 'webhook_off', level: 'high', text: 'The webhook to stripeWebhook is turned off in Stripe, so people who pay won\'t get the course.' });
+  return out;
 }
 
 // ---------------------------------------------------------------- Google Cloud audit logs
@@ -358,5 +411,5 @@ function cloudChange(entry, at) {
 module.exports = {
   KEY_SHOWN, SETUP_EVENTS, PAYMENT_FUNCTIONS,
   keyPrefix, scrub, small, stripeSetupChange, payoutDestinationAlert,
-  endpointView, endpointMap, priceState, checkDiff, cloudChange
+  endpointView, endpointMap, priceState, checkDiff, cloudChange, paymentsState, paymentProblems
 };

@@ -66,6 +66,7 @@
     pluto_stripe_forged:   { group: 'pluto', level: 'high',   on: true,  label: 'Fake Stripe messages', help: 'Requests to the Stripe watcher without a valid Stripe signature.' },
     // PlutoScan payment setup (added 2026-11-14)
     pluto_checkout_broken: { group: 'pluto', level: 'high',   on: true,  label: 'Checkout broken (price missing or archived)', help: 'The hourly Stripe check found the price checkout sells missing, archived or not set.' },
+    pluto_payments_blocked: { group: 'pluto', level: 'high', on: true,  label: 'Stripe can\'t take payments', help: 'Hourly: card payments or payouts turned off, information Stripe needs (overdue = high), or the stripeWebhook endpoint missing or off.' },
     pluto_stripe_key:      { group: 'pluto', level: 'high',   on: true,  label: 'Stripe key or account used by checkout changed', help: 'A different Stripe account, key kind or key version, a new price ID, or the hourly check could not run.' },
     pluto_stripe_webhooks: { group: 'pluto', level: 'high',   on: true,  label: 'Stripe webhook endpoint added, changed or removed', help: 'Found by the hourly check, so up to an hour late.' },
     pluto_stripe_bank:     { group: 'pluto', level: 'high',   on: true,  label: 'Stripe payout bank account changed' },
