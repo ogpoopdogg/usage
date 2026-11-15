@@ -17,6 +17,7 @@ gcloud services enable pubsub.googleapis.com secretmanager.googleapis.com cloudf
 
 step "2. Let the audit functions read checkout's settings and its Stripe key (read only)"
 gcloud projects add-iam-policy-binding $P --member="serviceAccount:$SA" --role=roles/cloudfunctions.viewer --condition=None --format='value(etag)' >/dev/null && echo "Cloud Functions Viewer: ok"
+gcloud projects add-iam-policy-binding $P --member="serviceAccount:$SA" --role=roles/run.viewer --condition=None --format='value(etag)' >/dev/null && echo "Cloud Run Viewer: ok"
 gcloud secrets add-iam-policy-binding STRIPE_SECRET_KEY --project $P --member="serviceAccount:$SA" --role=roles/secretmanager.secretAccessor --condition=None --format='value(etag)' >/dev/null && echo "Read STRIPE_SECRET_KEY: ok"
 
 step "3. Log feed for Google Cloud changes (topic $TOPIC + log sink)"

@@ -433,8 +433,20 @@ async function lookAtStripe() {
     return { error: 'Could not read the settings of ' + CHECKOUT_FUNCTION + ' (' + e.message + (e.status === 404 ? ': the function is gone' : e.status === 403 ? ': run the setup step that grants Cloud Functions Viewer' : '') + ').' };
   }
   const sc = fn.serviceConfig || {};
-  const priceId = (sc.environmentVariables || {}).STRIPE_PRICE_ID || null;
-  const sec = (sc.secretEnvironmentVariables || []).find((x) => x.key === 'STRIPE_SECRET_KEY');
+  let priceId = (sc.environmentVariables || {}).STRIPE_PRICE_ID || null;
+  let sec = (sc.secretEnvironmentVariables || []).find((x) => x.key === 'STRIPE_SECRET_KEY');
+  // What really runs is the Cloud Run service behind the function; a setting changed there (for
+  // example with `gcloud run services update`) shows only there, so it wins when it can be read.
+  if (sc.service) {
+    try {
+      const svc = await googleGet('https://run.googleapis.com/v2/' + sc.service);
+      const env = (((svc.template || {}).containers || [])[0] || {}).env || [];
+      const p = env.find((x) => x.name === 'STRIPE_PRICE_ID');
+      const k = env.find((x) => x.name === 'STRIPE_SECRET_KEY' && x.valueSource && x.valueSource.secretKeyRef);
+      if (p) priceId = p.value || null;
+      if (k) sec = { key: 'STRIPE_SECRET_KEY', secret: String(k.valueSource.secretKeyRef.secret).split('/').pop(), version: String(k.valueSource.secretKeyRef.version || 'latest') };
+    } catch (e) { /* fall back to the function's own settings */ }
+  }
   if (!sec) return { error: CHECKOUT_FUNCTION + ' is not using STRIPE_SECRET_KEY.' };
   const secretBase = 'https://secretmanager.googleapis.com/v1/projects/' + (sec.projectId || project) + '/secrets/' + (sec.secret || 'STRIPE_SECRET_KEY') + '/versions/';
   let key, keyVersion, latestKeyVersion = null;
