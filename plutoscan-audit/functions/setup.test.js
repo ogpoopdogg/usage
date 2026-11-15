@@ -213,3 +213,27 @@ test('can take payments: problems alert once when they appear, and are noted whe
   assert.strictEqual(due[0].level, 'medium');
   assert.match(due[0].text, /by 2026-01-01/);
 });
+
+// The database never stores null: what comes back from the last look is missing those fields.
+function asStored(v) {
+  if (v === null || typeof v !== 'object') return v;
+  const out = Array.isArray(v) ? [] : {};
+  for (const [k, x] of Object.entries(v)) if (x !== null && x !== undefined) out[k] = asStored(x);
+  return out;
+}
+
+test('a look read back from the database (nulls dropped) compares the same as before: no false alarms', () => {
+  const okAcct = { charges_enabled: true, payouts_enabled: true, requirements: { currently_due: [], past_due: [], disabled_reason: null } };
+  const list = [
+    { id: 'we_1', url: 'https://us-central1-plutoscan.cloudfunctions.net/auditPlutoStripe', status: 'enabled', enabled_events: ['price.updated'], description: null, api_version: null },
+    { id: 'we_2', url: 'https://us-central1-plutoscan.cloudfunctions.net/stripeWebhook', status: 'enabled', enabled_events: ['checkout.session.completed'], description: '' }
+  ];
+  const look = { account: 'acct_A', keyStart: 'sk_live_', keyVersion: '5', latestKeyVersion: '5', priceId: 'price_1', price: { state: 'ok', amount: null },
+    endpoints: S.endpointMap(list), payments: S.paymentsState(okAcct, list) };
+  assert.deepStrictEqual(S.checkDiff(asStored(look), look), { changes: [], alerts: [] });
+  // A real description change is still caught
+  const renamed = Object.assign({}, look, { endpoints: S.endpointMap([Object.assign({}, list[0], { description: 'changed by someone' }), list[1]]) });
+  const r = S.checkDiff(asStored(look), renamed);
+  assert.strictEqual(r.alerts.length, 1);
+  assert.match(r.alerts[0].detail, /auditPlutoStripe \(description\)/);
+});

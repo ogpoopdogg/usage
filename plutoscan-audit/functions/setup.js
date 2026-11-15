@@ -196,6 +196,16 @@ function priceState(status, body) {
 
 const PRICE_WORDS = { missing: 'does not exist', archived: 'is archived', error: 'could not be checked' };
 
+/**
+ * Whether two stored values are the same. The database drops empty values (null is never stored),
+ * so a value read back from the last look is missing where this hour's is null: treat missing,
+ * null and '' as the same thing, or every endpoint without a description looks "changed" each hour.
+ */
+function same(a, b) {
+  const blank = (v) => v === undefined || v === null || v === '';
+  return blank(a) ? blank(b) : a === b;
+}
+
 function summary(s) {
   return {
     account: s.account || null, keyStart: s.keyStart || null, keyVersion: s.keyVersion || null, latestKeyVersion: s.latestKeyVersion || null,
@@ -228,25 +238,25 @@ function checkDiff(prev, cur) {
   if (!prev || !prev.account) {
     ch('first look', 'created', [], null, summary(cur));
   } else {
-    if (prev.account !== cur.account) {
+    if (!same(prev.account, cur.account)) {
       ch('Stripe account used by checkout', 'updated', [{ f: 'account', b: prev.account, a: cur.account }], null, null);
       alerts.push({ type: 'stripe_key', level: 'high', title: 'Checkout now uses a different Stripe account',
         detail: 'STRIPE_SECRET_KEY now belongs to Stripe account ' + cur.account + ' (it was ' + prev.account + '). Products, prices and webhooks are separate in each account.' });
     }
-    if (prev.keyStart !== cur.keyStart) {
+    if (!same(prev.keyStart, cur.keyStart)) {
       ch('STRIPE_SECRET_KEY kind', 'updated', [{ f: 'key starts with', b: prev.keyStart, a: cur.keyStart }], null, null);
       alerts.push({ type: 'stripe_key', level: 'high', title: 'Stripe key changed kind',
         detail: 'The key checkout uses now starts with ' + cur.keyStart + ' (it started with ' + prev.keyStart + '): ' + (/test/.test(cur.keyStart || '') ? 'that is a TEST key, real cards won\'t be charged.' : 'check it is the key you meant.') });
     }
-    if (prev.keyVersion !== cur.keyVersion) {
+    if (!same(prev.keyVersion, cur.keyVersion)) {
       ch('STRIPE_SECRET_KEY version used by checkout', 'updated', [{ f: 'version', b: prev.keyVersion, a: cur.keyVersion }], null, null);
       alerts.push({ type: 'stripe_key', level: 'medium', title: 'Checkout uses a new Stripe key version',
         detail: 'createCheckoutSession now uses version ' + cur.keyVersion + ' of STRIPE_SECRET_KEY (it used ' + prev.keyVersion + '). Same Stripe account: ' + cur.account + '.' });
     }
-    if (prev.latestKeyVersion !== cur.latestKeyVersion && cur.latestKeyVersion !== cur.keyVersion) {
+    if (!same(prev.latestKeyVersion, cur.latestKeyVersion) && !same(cur.latestKeyVersion, cur.keyVersion)) {
       ch('STRIPE_SECRET_KEY newest version (not yet used by checkout)', 'updated', [{ f: 'newest version', b: prev.latestKeyVersion, a: cur.latestKeyVersion }], null, null);
     }
-    if (prev.priceId !== cur.priceId) {
+    if (!same(prev.priceId, cur.priceId)) {
       ch('STRIPE_PRICE_ID used by checkout', 'updated', [{ f: 'price id', b: prev.priceId, a: cur.priceId }], null, null);
       alerts.push({ type: 'stripe_key', level: 'medium', title: 'Checkout now sells a different price',
         detail: 'STRIPE_PRICE_ID changed from ' + (prev.priceId || 'none') + ' to ' + (cur.priceId || 'none') + '.' });
@@ -256,7 +266,7 @@ function checkDiff(prev, cur) {
   // The price checkout sells: alert when it goes bad (or is bad at the first look), note when it's fixed.
   const was = prev && prev.price ? prev.price.state : null;
   const now = cur.price ? cur.price.state : null;
-  if (now && now !== 'ok' && (was !== now || (prev && prev.priceId !== cur.priceId))) {
+  if (now && now !== 'ok' && (was !== now || (prev && !same(prev.priceId, cur.priceId)))) {
     alerts.push({ type: 'checkout_broken', level: 'high', title: 'PlutoScan checkout is broken',
       detail: 'The price checkout uses (' + (cur.priceId || 'STRIPE_PRICE_ID not set') + ') ' + (PRICE_WORDS[now] || now) + ' in Stripe account ' + cur.account + '. Nobody can buy the course until this is fixed.' });
     ch('checkout price', 'updated', [{ f: 'price ' + (cur.priceId || '(none)'), b: was, a: now }], null, null);
@@ -284,7 +294,7 @@ function checkDiff(prev, cur) {
   }
 
   // Webhook endpoints (Stripe sends no event when these change, so they're compared here).
-  if (prev && prev.account === cur.account && prev.endpoints) {
+  if (prev && same(prev.account, cur.account) && prev.endpoints) {
     const a = prev.endpoints || {};
     const b = cur.endpoints || {};
     const lines = [];
@@ -296,7 +306,7 @@ function checkDiff(prev, cur) {
         ch('webhook endpoint ' + id, 'deleted', [], a[id], null);
         lines.push('removed ' + (a[id].url || id));
       } else {
-        const fields = Object.keys(b[id]).filter((k) => a[id][k] !== b[id][k]).map((k) => ({ f: k, b: a[id][k], a: b[id][k] }));
+        const fields = Object.keys(b[id]).filter((k) => !same(a[id][k], b[id][k])).map((k) => ({ f: k, b: a[id][k] === undefined ? null : a[id][k], a: b[id][k] }));
         if (fields.length) {
           ch('webhook endpoint ' + id, 'updated', fields, a[id], b[id]);
           lines.push('changed ' + (b[id].url || id) + ' (' + fields.map((x) => x.f).join(', ') + ')');
