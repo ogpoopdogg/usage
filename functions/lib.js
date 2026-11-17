@@ -194,6 +194,8 @@ function deviceKey(ua) { return hash(deviceName(ua)); }
 /**
  * What the watchers look at. path: the trigger path; area: the name the page shows; level: the alert
  * any change raises (null = none); staffOnly: only staff accounts should ever write here;
+ * quietDeletes: deletes here never raise "Large delete" or count toward "Many deletes" (they are
+ * still logged, and every other alert still fires);
  * keepDays: everyday app activity whose log entries are kept that many days instead of the usual 90
  * (auditPrune); keepForever: entries never deleted (the time clock and Request Pickup: Justin
  * wants all employee time clock and pickup customer records kept). Alerts are raised the same either way.
@@ -215,7 +217,10 @@ const WATCHES = [
   { name: 'masterConfig', path: 'developer/dispatch_dashboard/master_config', area: 'RouteWatcher settings', level: 'medium', staffOnly: true },
   { name: 'nicknames', path: 'developer/dispatch_dashboard/driver_nicknames/{gpsId}', area: 'Driver nicknames', keepDays: 14 },
   { name: 'sessions', path: 'developer/dispatch_dashboard/active_sessions/{uid}', area: 'RouteWatcher sign-in locks', staffOnly: true, quiet: true, keepDays: 14 },
-  { name: 'routePlanner', path: 'developer/route_planner/{section}/{id}', area: 'Route planner', staffOnly: true, skip: ['ui_prefs', 'notification_reads'], keepDays: 14 },
+  { name: 'routePlanner', path: 'developer/route_planner/{section}/{id}', area: 'Route planner', staffOnly: true, skip: ['ui_prefs', 'notification_reads'], keepDays: 14,
+    // Route Planner and Route Helper both save here. Clearing or deleting lists is everyday work
+    // and set off delete alerts each time, so Justin asked for them to stop (Nov 17 2026).
+    quietDeletes: true },
   { name: 'tcEmployees', path: 'timeclock/employees/{ek}', area: 'Time clock employees', level: 'high', keepForever: true },
   { name: 'tcSettings', path: 'timeclock/settings', area: 'Time clock settings', level: 'medium', keepForever: true },
   { name: 'tcShifts', path: 'timeclock/shifts/{ek}/{shiftId}', area: 'Time clock punches', keepForever: true },
@@ -326,7 +331,7 @@ function changeAlerts(entry, watch, { staff, adminEmail }) {
   } else if (watch.level && !watch.quiet) {
     out.push({ type: watch.level === 'high' ? 'access_change' : 'settings_change', level: watch.level, title: entry.area + ' ' + entry.action, detail: who + ' ' + entry.action + ' ' + entry.path + (entry.fields.length ? ' (' + entry.fields.slice(0, 5).map((f) => f.f).join(', ') + ')' : '') });
   }
-  if (entry.action === 'deleted' && entry.n >= 20) {
+  if (entry.action === 'deleted' && entry.n >= 20 && !watch.quietDeletes) {
     out.push({ type: 'large_delete', level: 'high', title: 'Large delete', detail: who + ' deleted ' + entry.path + ' (' + entry.n + ' values).' });
   }
   return out;

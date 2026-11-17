@@ -140,6 +140,11 @@ test('alerts for changes', () => {
   // Locked areas: any write at all is high, whoever made it
   const locked = L.WATCHES.find((w) => w.name === 'userOrders');
   assert.deepEqual(L.changeAlerts(entry({ by: { type: 'admin', uid: null } }), locked, { staff: null }).map((a) => [a.type, a.level]), [['locked_area_write', 'high']]);
+  // Route Planner / Route Helper deletes are quiet, but a delete with no sign-in still alerts
+  const planner = L.WATCHES.find((w) => w.name === 'routePlanner');
+  assert.deepEqual(L.changeAlerts(entry({ action: 'deleted', n: 500 }), planner, { staff: true }), []);
+  assert.deepEqual(L.changeAlerts(entry({ action: 'deleted', n: 500, by: { type: 'unauthenticated', uid: null } }), planner, {}).map((a) => a.type), ['no_signin_change']);
+  assert.deepEqual(L.changeAlerts(entry({ action: 'deleted', n: 500 }), planner, { staff: false }).map((a) => a.type), ['nonstaff_change']);
   // The morning test write is quiet
   assert.deepEqual(L.changeAlerts(entry({ by: { type: 'admin', uid: null } }), L.WATCHES.find((w) => w.name === 'canaryWatch'), { staff: null }), []);
 });
