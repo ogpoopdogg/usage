@@ -399,7 +399,7 @@ function watcher(watch) {
         admin: entry.by.type === 'admin' || !!(person && L.ADMIN_EMAILS.includes(person.email)) }));
     }
     for (const a of alerts) jobs.push(raise(a, watch.name, at));
-    if (entry.action === 'deleted') {
+    if (entry.action === 'deleted' && !watch.quietDeletes) {
       // Per account; changes with no account (server code, the console) are counted together
       jobs.push(count('deletes/' + L.bucket(at, DELETE_WINDOW) + '/' + L.safeKey(entry.by.uid || entry.by.type)).then((n) => {
         if (n === DELETE_ALERT) {
